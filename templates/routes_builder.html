@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Конструктор маршрутів — RunTracker{% endblock %}
+
+{% block content %}
+<div class="stack">
+  <div class="row-between">
+    <div>
+      <h1 style="font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">Конструктор маршрутів</h1>
+      <p class="muted small">Клікай по карті, щоб додати точки. Маршрут прокладається пішки через OSRM, висоти — через Open-Meteo.</p>
+    </div>
+    <span class="badge badge-blue">OSRM · Open-Meteo</span>
+  </div>
+
+  <div class="split">
+    <section class="card map-card">
+      <div class="card-head" style="margin-bottom: 10px;">
+        <h2 class="section-title">Карта</h2>
+        <span class="badge" id="waypoint-count">0 точок</span>
+      </div>
+      <div id="builder-map" class="map map-lg"></div>
+      <p class="map-hint">Клік по карті додає точку. Потрібно щонайменше 2 точки, максимум 25.</p>
+    </section>
+
+    <section class="card card-pad route-panel">
+      <div>
+        <h2 class="card-title">Маршрут</h2>
+        <p class="muted small" style="margin-top: 4px;">Дистанція, набір висоти та готовий GPX для завантаження.</p>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-primary" id="build-btn" type="button">Побудувати маршрут</button>
+        <button class="btn btn-sm" id="undo-btn" type="button">↶ Остання</button>
+        <button class="btn btn-sm" id="clear-btn" type="button">Очистити</button>
+      </div>
+
+      <p class="small" id="builder-status" style="min-height: 20px; color: var(--muted);"></p>
+
+      <div class="map-stats" id="route-stats" hidden>
+        <div>
+          <p class="stat-label">Дистанція</p>
+          <p class="stat-value" style="font-size: 22px;" id="stat-distance">—</p>
+        </div>
+        <div>
+          <p class="stat-label">Набір висоти</p>
+          <p class="stat-value" style="font-size: 22px;" id="stat-elevation">—</p>
+        </div>
+        <div>
+          <p class="stat-label">Орієнтовний час</p>
+          <p class="stat-value" style="font-size: 22px;" id="stat-duration">—</p>
+        </div>
+      </div>
+
+      <div>
+        <p class="label">Точки маршруту</p>
+        <div class="waypoint-list" id="waypoint-list">
+          <p class="muted small">Ще немає точок — клікни по карті.</p>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="download-btn" type="button" disabled>⤓ Завантажити .gpx</button>
+      <p class="muted small">Час у GPX — орієнтовний (темп 6:00/км), щоб файл одразу імпортувався з дистанцією та темпом.</p>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const defaultCenter = {{ default_center|tojson }};
+  const waypoints = [];
+  let lastGpx = null;
+  let routeLayer = null;
+
+  const mapEl = document.getElementById("builder-map");
+  const statusEl = document.getElementById("builder-status");
+  const countEl = document.getElementById("waypoint-count");
+  const listEl = document.getElementById("waypoint-list");
+  const statsEl = document.getElementById("route-stats");
+  const downloadBtn = document.getElementById("download-btn");
+
+  const map = L.map(mapEl).setView(defaultCenter, 13);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+  const markers = L.featureGroup().addTo(map);
+  const guide = L.featureGroup().addTo(map);
+
+  function renderWaypoints() {
+    markers.clearLayers();
+    guide.clearLayers();
+    waypoints.forEach((point, index) => {
+      L.circleMarker(point, { radius: 7, color: "#fc4c02", fillColor: "#fc4c02", fillOpacity: 1 })
+        .addTo(markers)
+        .bindTooltip(String(index + 1), { permanent: false });
+    });
+    if (waypoints.length > 1) {
+      L.polyline(waypoints, { color: "#58a6ff", weight: 2, dashArray: "6 6", opacity: 0.8 }).addTo(guide);
+    }
+    countEl.textContent = waypoints.length + " точок";
+    renderList();
+  }
+
+  function renderList() {
+    if (!waypoints.length) {
+      listEl.innerHTML = '<p class="muted small">Ще немає точок — клікни по карті.</p>';
+      return;
+    }
+    listEl.innerHTML = waypoints.map((point, index) =>
+      '<div class="waypoint"><span>#' + (index + 1) + '</span><span>' +
+      point[0].toFixed(5) + ", " + point[1].toFixed(5) + "</span></div>"
+    ).join("");
+  }
+
+  function addWaypoint(latlng) {
+    if (waypoints.length >= 25) {
+      statusEl.textContent = "Максимум 25 точок.";
+      return;
+    }
+    waypoints.push([latlng.lat, latlng.lng]);
+    renderWaypoints();
+    statusEl.textContent = "";
+  }
+
+  map.on("click", (event) => addWaypoint(event.latlng));
+
+  document.getElementById("undo-btn").addEventListener("click", () => {
+    waypoints.pop();
+    renderWaypoints();
+    statusEl.textContent = "";
+  });
+
+  document.getElementById("clear-btn").addEventListener("click", () => {
+    waypoints.length = 0;
+    lastGpx = null;
+    if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+    statsEl.hidden = true;
+    downloadBtn.disabled = true;
+    renderWaypoints();
+    statusEl.textContent = "";
+  });
+
+  document.getElementById("build-btn").addEventListener("click", async () => {
+    if (waypoints.length < 2) {
+      statusEl.textContent = "Додай щонайменше 2 точки.";
+      return;
+    }
+    statusEl.textContent = "Будую маршрут…";
+    try {
+      const response = await fetch("/api/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ waypoints })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        statusEl.textContent = data.error || "Не вдалося побудувати маршрут.";
+        return;
+      }
+      lastGpx = data.gpx;
+      if (routeLayer) { map.removeLayer(routeLayer); }
+      routeLayer = L.polyline(data.coords, { color: "#fc4c02", weight: 4, opacity: 0.95 }).addTo(map);
+      map.fitBounds(routeLayer.getBounds(), { padding: [26, 26] });
+
+      document.getElementById("stat-distance").textContent = data.distance_km.toFixed(2) + " км";
+      document.getElementById("stat-elevation").textContent = Math.round(data.elevation_gain_m) + " м";
+      const duration = data.estimated_duration_sec;
+      const minutes = Math.floor(duration / 60);
+      document.getElementById("stat-duration").textContent = minutes + " хв";
+      statsEl.hidden = false;
+      downloadBtn.disabled = !lastGpx;
+      statusEl.textContent = "Готово! Можна завантажувати GPX.";
+    } catch (error) {
+      statusEl.textContent = "Мережева помилка: " + error.message;
+    }
+  });
+
+  downloadBtn.addEventListener("click", () => {
+    if (!lastGpx) return;
+    const blob = new Blob([lastGpx], { type: "application/gpx+xml" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "runtracker-route.gpx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+  });
+
+  renderWaypoints();
+</script>
+{% endblock %}

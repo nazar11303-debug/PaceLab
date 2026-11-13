@@ -13,15 +13,30 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, joinedload
 
+from .analytics import (
+    DEFAULT_GOALS,
+    acwr,
+    available_report_months,
+    compute_challenges,
+    compute_streak,
+    fitness_fatigue,
+    heatmap_tracks,
+    heatmap_years,
+    hr_zone_analysis,
+    monthly_report,
+    personal_records,
+)
 from .db import BASE_DIR, get_db, init_db
-from .models import Activity, Shoe
+from .models import Activity, AppSettings, Shoe
 from .parser import SUPPORTED_EXTENSIONS, ParseError, parse_activity_file
+from .routing import RouteError, RouteInputError, build_route
+from .weather import badge_from_json, fetch_weather
 
 UPLOAD_DIR = BASE_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
@@ -93,6 +108,11 @@ def fmt_datetime_local(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%dT%H:%M")
 
 
+def weather_badge(activity: Activity) -> dict | None:
+    """Jinja filter: weather dict for a training (``None`` when unavailable)."""
+    return badge_from_json(activity.weather_json)
+
+
 templates.env.filters.update(
     {
         "duration": fmt_duration,
@@ -101,8 +121,43 @@ templates.env.filters.update(
         "km": fmt_km,
         "date": fmt_date,
         "datetime_local": fmt_datetime_local,
+        "weather": weather_badge,
     }
 )
+
+
+# --------------------------------------------------------------------------- #
+#  app settings (monthly challenge goals)
+# --------------------------------------------------------------------------- #
+GOAL_KEYS = ("goal_month_distance_km", "goal_month_elevation_m", "goal_month_runs")
+
+
+def _get_goals(db: Session) -> dict[str, float]:
+    goals = dict(DEFAULT_GOALS)
+    rows = db.execute(select(AppSettings).where(AppSettings.key.in_(GOAL_KEYS))).scalars().all()
+    for row in rows:
+        try:
+            goals[row.key] = float(row.value)
+        except (TypeError, ValueError):
+            continue
+    return goals
+
+
+def _save_goals(db: Session, values: dict[str, str]) -> None:
+    for key in GOAL_KEYS:
+        raw = (values.get(key) or "").replace(",", ".").strip()
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = DEFAULT_GOALS[key]
+        if value <= 0:
+            value = DEFAULT_GOALS[key]
+        row = db.get(AppSettings, key)
+        if row is None:
+            db.add(AppSettings(key=key, value=f"{value:g}"))
+        else:
+            row.value = f"{value:g}"
+    db.commit()
 
 
 # --------------------------------------------------------------------------- #
@@ -216,6 +271,7 @@ def home(
     db: Session = Depends(get_db),
     message: str | None = None,
     error: str | None = None,
+    report_month: str | None = None,
 ) -> HTMLResponse:
     now = datetime.now()
     starts = _period_starts(now)
@@ -233,6 +289,17 @@ def home(
     )
     shoes = db.execute(select(Shoe).order_by(Shoe.is_active.desc(), Shoe.id)).scalars().all()
 
+    streak = compute_streak(db)
+    goals = _get_goals(db)
+    challenges = compute_challenges(db, goals)
+
+    months = available_report_months(db)
+    month_values = {entry["value"] for entry in months}
+    default_month = f"{now.year:04d}-{now.month:02d}"
+    selected_month = report_month if report_month in month_values else default_month
+    report_year, report_month_number = (int(part) for part in selected_month.split("-"))
+    report = monthly_report(db, report_year, report_month_number)
+
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -244,6 +311,13 @@ def home(
             "message": message,
             "error": error,
             "now": now,
+            "nav_active": "home",
+            "streak": streak,
+            "challenges": challenges,
+            "goals": goals,
+            "report": report,
+            "report_months": months,
+            "report_month": selected_month,
         },
     )
 
@@ -290,6 +364,15 @@ async def upload_activity(
         destination.unlink(missing_ok=True)
         return _error(_duplicate_message(existing))
 
+    # 3) погода на годину старту (Open-Meteo, без ключа; помилки не валять імпорт)
+    weather: dict | None = None
+    gps_point = next(
+        (point for point in payload["points"] if point.get("lat") is not None and point.get("lon") is not None),
+        None,
+    )
+    if gps_point is not None:
+        weather = fetch_weather(gps_point["lat"], gps_point["lon"], payload["date"])
+
     selected_shoe: Shoe | None = None
     shoe_id = (shoe_id or "").strip()
     if shoe_id.isdigit():
@@ -306,6 +389,7 @@ async def upload_activity(
         elevation_gain=payload["elevation_gain"],
         shoe_id=selected_shoe.id if selected_shoe else None,
         file_hash=file_hash,
+        weather_json=json.dumps(weather, ensure_ascii=False) if weather else None,
         raw_points_json=json.dumps(
             {
                 "points": payload["points"],
@@ -358,6 +442,7 @@ def activity_detail(
             "splits": activity.splits,
             "message": message,
             "error": error,
+            "nav_active": "",
         },
     )
 
@@ -676,3 +761,136 @@ def export_backup_json(db: Session = Depends(get_db)) -> Response:
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# --------------------------------------------------------------------------- #
+#  analytics, heatmap, route builder, challenge goals
+# --------------------------------------------------------------------------- #
+#: Київ / Троєщина — центр за замовчуванням для всіх карт без треку
+KIEV_CENTER = (50.517, 30.605)
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+def analytics_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    message: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    zones = hr_zone_analysis(db)
+    fitness = fitness_fatigue(db, days=42)
+    records = personal_records(db)
+    recovery = acwr(db)
+    return templates.TemplateResponse(
+        request=request,
+        name="analytics.html",
+        context={
+            "message": message,
+            "error": error,
+            "nav_active": "analytics",
+            "zones": zones,
+            "fitness": fitness,
+            "records": records,
+            "recovery": recovery,
+        },
+    )
+
+
+@app.get("/heatmap", response_class=HTMLResponse)
+def heatmap_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    year: int | None = None,
+    month: int | None = None,
+    message: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    years = heatmap_years(db)
+    selected_year = year if year in years else None
+    selected_month = month if month and 1 <= month <= 12 else None
+    tracks = heatmap_tracks(db, selected_year, selected_month)
+    return templates.TemplateResponse(
+        request=request,
+        name="heatmap.html",
+        context={
+            "message": message,
+            "error": error,
+            "nav_active": "heatmap",
+            "tracks": tracks,
+            "years": years,
+            "selected_year": selected_year,
+            "selected_month": selected_month,
+            "default_center": list(KIEV_CENTER),
+        },
+    )
+
+
+@app.get("/routes/builder", response_class=HTMLResponse)
+def route_builder_page(
+    request: Request,
+    message: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="routes_builder.html",
+        context={
+            "message": message,
+            "error": error,
+            "nav_active": "routes",
+            "default_center": list(KIEV_CENTER),
+        },
+    )
+
+
+@app.post("/api/route")
+async def api_route(request: Request) -> JSONResponse:
+    """Build a foot route via OSRM (server-side proxy keeps CORS/keys simple)."""
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001 - malformed body from the client
+        return JSONResponse({"ok": False, "error": "Некоректний JSON запиту"}, status_code=400)
+
+    waypoints = payload.get("waypoints") if isinstance(payload, dict) else None
+    try:
+        result = build_route(waypoints)
+    except RouteInputError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RouteError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    except Exception as exc:  # noqa: BLE001 - never break the page
+        return JSONResponse({"ok": False, "error": f"Не вдалося побудувати маршрут: {exc}"}, status_code=500)
+
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/challenges/goals")
+def update_challenge_goals(
+    goal_month_distance_km: str = Form("100"),
+    goal_month_elevation_m: str = Form("1000"),
+    goal_month_runs: str = Form("12"),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    _save_goals(
+        db,
+        {
+            "goal_month_distance_km": goal_month_distance_km,
+            "goal_month_elevation_m": goal_month_elevation_m,
+            "goal_month_runs": goal_month_runs,
+        },
+    )
+    return _message("Цілі челенджів оновлено")
+
+
+@app.get("/manifest.json")
+def pwa_manifest() -> Response:
+    """Serve the PWA manifest from the app root (nicer scope than /static)."""
+    manifest = (STATIC_DIR / "manifest.json").read_text(encoding="utf-8")
+    return Response(content=manifest, media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker() -> Response:
+    """Service worker must be served from the root scope to control the app."""
+    script = (STATIC_DIR / "sw.js").read_text(encoding="utf-8")
+    return Response(content=script, media_type="application/javascript")

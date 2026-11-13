@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Мапа тренувань (Heatmap) — RunTracker{% endblock %}
+
+{% block content %}
+<div class="stack">
+  <div class="row-between">
+    <div>
+      <h1 style="font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">Мапа тренувань</h1>
+      <p class="muted small">Усі завантажені треки на одній карті Києва. Фільтруй за роком і місяцем.</p>
+    </div>
+    <form method="get" action="/heatmap" class="row" style="gap: 8px;">
+      <select class="select" name="year" style="width: auto;">
+        <option value="">Усі роки</option>
+        {% for year in years %}
+        <option value="{{ year }}" {{ 'selected' if selected_year == year }}>{{ year }}</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="month" style="width: auto;">
+        <option value="">Усі місяці</option>
+        {% set months = ["Січень","Лютий","Березень","Квітень","Травень","Червень","Липень","Серпень","Вересень","Жовтень","Листопад","Грудень"] %}
+        {% for index in range(1, 13) %}
+        <option value="{{ index }}" {{ 'selected' if selected_month == index }}>{{ months[index - 1] }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-sm" type="submit">Показати</button>
+    </form>
+  </div>
+
+  <section class="card map-card">
+    <div class="card-head" style="margin-bottom: 10px;">
+      <h2 class="section-title">Heatmap</h2>
+      <span class="badge badge-accent">{{ tracks|length }} треків на карті</span>
+    </div>
+    <div id="heatmap" class="map map-lg"></div>
+    <div class="legend mt-sm">
+      <span><span class="legend-dot" style="background:#fc4c02"></span>тренування</span>
+      <span><span class="legend-dot" style="background:#58a6ff"></span>центр Києва / Троєщина</span>
+      <span class="muted">товщина лінії залежить від кількості точок</span>
+    </div>
+    {% if not tracks %}
+    <p class="map-hint">Для цього фільтра немає треків із GPS. Завантаж .gpx або зміни фільтр.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const tracks = {{ tracks|tojson }};
+  const defaultCenter = {{ default_center|tojson }};
+  const mapEl = document.getElementById("heatmap");
+  if (mapEl && window.L) {
+    const map = L.map(mapEl).setView(defaultCenter, 13);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
+
+    const group = L.featureGroup().addTo(map);
+    tracks.forEach(track => {
+      if (!track.points || track.points.length < 2) return;
+      L.polyline(track.points, {
+        color: "#fc4c02",
+        weight: 3,
+        opacity: 0.5,
+        smoothFactor: 1.2
+      }).addTo(group).bindPopup(
+        "<b>" + track.title + "</b><br>" + track.date + " · " + track.distance_km + " км"
+      );
+    });
+
+    L.circleMarker(defaultCenter, { radius: 5, color: "#58a6ff", fillColor: "#58a6ff", fillOpacity: 0.9 })
+      .addTo(map).bindPopup("Київ / Троєщина");
+
+    if (tracks.length && group.getBounds().isValid()) {
+      map.fitBounds(group.getBounds().pad(0.12));
+    }
+  }
+</script>
+{% endblock %}

@@ -60,6 +60,8 @@ class Activity(Base):
     shoe_id: Mapped[int | None] = mapped_column(ForeignKey("shoes.id"), nullable=True)
     raw_points_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: JSON-рядок з погодою на годину старту (Open-Meteo), None якщо не вдалось отримати
+    weather_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     shoe: Mapped[Shoe | None] = relationship(back_populates="activities")
 
@@ -96,4 +98,14 @@ class Activity(Base):
             "shoe_id": self.shoe_id,
             "shoe_name": self.shoe.name if self.shoe else None,
             "file_hash": self.file_hash,
+            "weather_json": self.weather_json,
         }
+
+
+class AppSettings(Base):
+    """Прості key/value налаштування застосунку (цілі челенджів тощо)."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="", nullable=False)

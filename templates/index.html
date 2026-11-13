@@ -2,211 +2,323 @@
 {% block title %}RunTracker — тренування{% endblock %}
 
 {% block content %}
-<!-- ── статистика ───────────────────────────────────────────────────── -->
-<section class="grid gap-4 sm:grid-cols-3">
-  {% for key, label in [("week", "Цей тиждень"), ("month", "Цей місяць"), ("year", "Цей рік")] %}
-  {% set s = stats[key] %}
-  <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">{{ label }}</p>
-    <p class="mt-2 text-3xl font-extrabold tracking-tight">
-      {{ s.distance_km|km }}<span class="ml-1 text-base font-semibold text-slate-400">км</span>
-    </p>
-    <p class="mt-1 text-sm text-slate-500">
-      {{ s.count }} тренув. · {{ s.duration_sec|duration }}
-    </p>
-    <p class="mt-3 flex items-center justify-between text-xs text-slate-400">
-      <span>набір: {{ s.elevation_m }} м</span>
-      <span>темп: {{ s.avg_pace_sec|pace_km }}</span>
-    </p>
-  </article>
-  {% endfor %}
-</section>
+<div class="stack">
+  <!-- ── тиждень / місяць / рік ─────────────────────────────────────── -->
+  <section class="stats-grid">
+    {% for key, label in [("week", "Цей тиждень"), ("month", "Цей місяць"), ("year", "Цей рік")] %}
+    {% set s = stats[key] %}
+    <article class="card card-pad">
+      <p class="stat-label">{{ label }}</p>
+      <p class="stat-value">{{ s.distance_km|km }}<small>км</small></p>
+      <p class="stat-sub">{{ s.count }} тренув. · {{ s.duration_sec|duration }}</p>
+      <p class="stat-foot"><span>набір {{ s.elevation_m }} м</span><span>темп {{ s.avg_pace_sec|pace_km }}</span></p>
+    </article>
+    {% endfor %}
+  </section>
 
-<div class="mt-6 grid gap-6 lg:grid-cols-3">
-  <!-- ── завантаження ───────────────────────────────────────────────── -->
-  <section class="lg:col-span-2">
-    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 class="text-lg font-bold">Завантажити тренування</h2>
-      <p class="mt-1 text-sm text-slate-500">Перетягни файл <b>.gpx</b> або <b>.fit</b> у зону нижче, обери кросівки та натисни «Додати». Повторний імпорт того самого тренування відхиляється.</p>
+  <!-- ── стрік + челенджі ──────────────────────────────────────────── -->
+  <div class="grid-2">
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">🔥 Стрік</h2>
+        <span class="badge {{ 'badge-accent' if streak.weeks > 0 else '' }}">{{ streak.weeks }} тижн.</span>
+      </div>
+      <div class="streak-card">
+        <span class="streak-flame">🔥</span>
+        <div>
+          <div class="streak-value">{{ streak.weeks }}<small> тижнів поспіль</small></div>
+          <div class="muted small">{{ streak.week_distance_km }} км цього тижня</div>
+        </div>
+      </div>
+      <div class="week-grid">
+        {% for day in streak.days %}
+        <div class="week-day {{ 'done' if day.has_run }} {{ 'today' if day.is_today }} {{ 'future' if day.is_future }}"
+             title="{{ day.date }}{% if day.has_run %} · {{ day.distance_km }} км{% endif %}">
+          <span class="wd-label">{{ day.label }}</span>
+          <span class="wd-dot"></span>
+          <span>{{ day.day_number }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% if streak.at_risk %}
+      <p class="streak-note muted">Пробіжки цього тижня ще немає — стрік під загрозою. Легкі 5 км врятують серію 😉</p>
+      {% elif streak.weeks == 0 %}
+      <p class="streak-note muted">Завантаж тренування — і вогник почне горіти.</p>
+      {% else %}
+      <p class="streak-note muted">Тиждень закрито — так тримати!</p>
+      {% endif %}
+    </section>
 
-      <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mt-4 space-y-4">
-        <label id="dropzone" for="file-input"
-               class="dropzone flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center transition hover:border-orange-400 hover:bg-orange-50/40">
-          <span class="text-4xl">📈</span>
-          <span class="mt-3 text-sm font-semibold text-slate-700">Перетягни файл сюди або клікни, щоб обрати</span>
-          <span class="mt-1 text-xs text-slate-400">.gpx та .fit — максимум 50 МБ</span>
-          <span id="file-name" class="mt-3 hidden rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700"></span>
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Челенджі місяця</h2>
+        <span class="muted small">прогрес</span>
+      </div>
+      <div class="stack" style="gap: 12px;">
+        {% for challenge in challenges %}
+        <div class="challenge">
+          <div class="challenge-head">
+            <span class="small">{{ challenge.label }}</span>
+            <span class="challenge-value">{{ challenge.value }}{% if challenge.unit %} {{ challenge.unit }}{% endif %}</span>
+          </div>
+          <div class="progress">
+            <div class="progress-bar {{ 'green' if challenge.percent >= 100 else ('blue' if challenge.key == 'runs' else '') }}"
+                 style="width: {{ challenge.percent }}%"></div>
+          </div>
+          <div class="challenge-meta">
+            <span>ціль: {{ challenge.goal }}{% if challenge.unit %} {{ challenge.unit }}{% endif %}</span>
+            <span>{{ challenge.percent }}%{% if not challenge.done %} · лишилось {{ challenge.remaining }}{% endif %}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <details class="mt-sm">
+        <summary class="muted small" style="cursor: pointer;">⚙ Змінити цілі</summary>
+        <form action="/challenges/goals" method="post" class="form-grid mt-sm">
+          <div class="form-row">
+            <div>
+              <label class="label" for="goal-distance">Дистанція, км</label>
+              <input class="input" id="goal-distance" name="goal_month_distance_km" type="number" min="1" step="1" value="{{ goals.goal_month_distance_km|round(0)|int }}">
+            </div>
+            <div>
+              <label class="label" for="goal-elevation">Набір, м</label>
+              <input class="input" id="goal-elevation" name="goal_month_elevation_m" type="number" min="1" step="10" value="{{ goals.goal_month_elevation_m|round(0)|int }}">
+            </div>
+            <div>
+              <label class="label" for="goal-runs">Тренувань</label>
+              <input class="input" id="goal-runs" name="goal_month_runs" type="number" min="1" step="1" value="{{ goals.goal_month_runs|round(0)|int }}">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" type="submit">Зберегти цілі</button>
+        </form>
+      </details>
+    </section>
+  </div>
+
+  <!-- ── завантаження + кросівки ──────────────────────────────────── -->
+  <div class="split">
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Завантажити тренування</h2>
+        <span class="badge badge-blue" title="Погода підтягується автоматично">🌤️ погода авто</span>
+      </div>
+      <p class="muted small">Перетягни <b>.gpx</b> або <b>.fit</b>, обери кросівки та натисни «Додати». Дублі відхиляються, погода підтягується за координатами старту.</p>
+
+      <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mt-md">
+        <label id="dropzone" for="file-input" class="dropzone">
+          <span class="drop-icon">📈</span>
+          <span class="drop-title">Перетягни файл сюди або клікни, щоб обрати</span>
+          <span class="drop-hint">.gpx та .fit · до 50 МБ</span>
+          <span id="file-name" class="badge badge-accent" hidden></span>
           <input id="file-input" name="file" type="file" accept=".gpx,.fit" class="sr-only" required>
         </label>
 
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div class="flex-1">
-            <label for="shoe-select" class="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-400">Кросівки</label>
-            <select id="shoe-select" name="shoe_id"
-                    class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-orange-400 focus:outline-none">
+        <div class="row mt-md" style="align-items: flex-end;">
+          <div style="flex: 1; min-width: 180px;">
+            <label class="label" for="shoe-select">Кросівки</label>
+            <select class="select" id="shoe-select" name="shoe_id">
               <option value="">Без кросівок</option>
               {% for shoe in active_shoes %}
               <option value="{{ shoe.id }}">{{ shoe.name }}{% if shoe.brand %} · {{ shoe.brand }}{% endif %}</option>
               {% endfor %}
             </select>
           </div>
-          <button type="submit"
-                  class="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600">
-            Додати тренування
-          </button>
+          <button class="btn btn-primary" type="submit">Додати тренування</button>
         </div>
       </form>
-    </div>
-  </section>
+    </section>
 
-  <!-- ── кросівки ───────────────────────────────────────────────────── -->
-  <section>
-    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold">Кросівки</h2>
-        <span class="text-xs text-slate-400">{{ shoes|length }} пар</span>
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Кросівки</h2>
+        <span class="muted small">{{ shoes|length }} пар</span>
       </div>
-
-      <div class="mt-3 space-y-3">
+      <div class="stack" style="gap: 10px;">
         {% for shoe in shoes %}
-        <div class="rounded-xl border {{ 'border-slate-200 bg-white' if shoe.is_active else 'border-slate-100 bg-slate-50 opacity-80' }} p-3">
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0">
-              <p class="truncate text-sm font-semibold">{{ shoe.name }}</p>
-              <p class="text-xs text-slate-400">{{ shoe.brand or "без бренду" }}</p>
+        <div class="challenge" style="{{ '' if shoe.is_active else 'opacity: 0.65;' }}">
+          <div class="challenge-head">
+            <div style="min-width: 0;">
+              <div class="small" style="font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ shoe.name }}</div>
+              <div class="muted" style="font-size: 11.5px;">{{ shoe.brand or "без бренду" }}</div>
             </div>
-            <div class="flex shrink-0 items-center gap-1">
-              <a href="/shoes/{{ shoe.id }}/edit" title="Редагувати"
-                 class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">✎</a>
+            <div class="row" style="gap: 4px;">
+              <a class="btn btn-sm btn-ghost" href="/shoes/{{ shoe.id }}/edit" title="Редагувати">✎</a>
               <form action="/shoes/{{ shoe.id }}/toggle" method="post">
-                <button type="submit" title="{{ 'Архівувати' if shoe.is_active else 'Повернути з архіву' }}"
-                        class="rounded-lg px-2 py-1 text-xs font-medium transition {{ 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' if shoe.is_active else 'bg-slate-100 text-slate-500 hover:bg-slate-200' }}">
+                <button class="btn btn-sm {{ 'btn-ghost' if shoe.is_active else 'btn-ghost' }}" type="submit"
+                        title="{{ 'Архівувати' if shoe.is_active else 'Повернути з архіву' }}">
                   {{ "активні" if shoe.is_active else "архів" }}
                 </button>
               </form>
               <form action="/shoes/{{ shoe.id }}/delete" method="post"
-                    onsubmit="return confirm('Видалити кросівки «{{ shoe.name }}»? Тренування залишаться, але без прив’язки.')">
-                <button type="submit" title="Видалити"
-                        class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-red-50 hover:text-red-600">✕</button>
+                    onsubmit="return confirm('Видалити кросівки «{{ shoe.name }}»? Тренування залишаться без прив’язки.')">
+                <button class="btn btn-sm btn-danger" type="submit" title="Видалити">✕</button>
               </form>
             </div>
           </div>
-          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div class="h-full rounded-full {{ 'bg-orange-500' if shoe.wear_percent < 80 else 'bg-red-500' }}"
-                 style="width: {{ shoe.wear_percent }}%"></div>
+          <div class="progress mt-sm">
+            <div class="progress-bar {{ 'green' if shoe.wear_percent < 80 else '' }}"
+                 style="width: {{ shoe.wear_percent }}%; {{ '' if shoe.wear_percent < 80 else 'background: linear-gradient(90deg, #f85149, #ff9b95);' }}"></div>
           </div>
-          <p class="mt-1 flex justify-between text-[11px] text-slate-400">
+          <div class="challenge-meta">
             <span>{{ "%.1f"|format(shoe.current_distance_km) }} / {{ "%.0f"|format(shoe.max_distance_km) }} км</span>
             <span>знос {{ shoe.wear_percent }}%</span>
-          </p>
+          </div>
         </div>
         {% endfor %}
         {% if not shoes %}
-        <p class="text-sm text-slate-400">Ще немає кросівок — додай перші нижче.</p>
+        <p class="muted small">Ще немає кросівок — додай перші нижче.</p>
         {% endif %}
       </div>
 
-      <details class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <summary class="cursor-pointer text-sm font-semibold text-slate-600">+ Додати кросівки</summary>
-        <form action="/shoes" method="post" class="mt-3 space-y-2">
-          <input name="name" required placeholder="Назва (напр. Pegasus 41)"
-                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
-          <div class="flex gap-2">
-            <input name="brand" placeholder="Бренд"
-                   class="w-1/2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
-            <input name="max_distance_km" type="number" min="1" step="1" placeholder="Ресурс, км" value="700"
-                   class="w-1/2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
+      <details class="mt-sm">
+        <summary class="muted small" style="cursor: pointer;">＋ Додати кросівки</summary>
+        <form action="/shoes" method="post" class="form-grid mt-sm">
+          <div>
+            <label class="label" for="shoe-name">Назва</label>
+            <input class="input" id="shoe-name" name="name" required maxlength="120" placeholder="Pegasus 41">
           </div>
-          <input name="current_distance_km" type="number" min="0" step="0.1" placeholder="Початковий пробіг, км (для вже біганих)" value="0"
-                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
-          <button type="submit"
-                  class="w-full rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-slate-700">
-            Зберегти
-          </button>
+          <div class="form-row">
+            <div>
+              <label class="label" for="shoe-brand">Бренд</label>
+              <input class="input" id="shoe-brand" name="brand" maxlength="120" placeholder="Nike">
+            </div>
+            <div>
+              <label class="label" for="shoe-max">Ресурс, км</label>
+              <input class="input" id="shoe-max" name="max_distance_km" type="number" min="1" step="1" value="700">
+            </div>
+          </div>
+          <div>
+            <label class="label" for="shoe-initial">Початковий пробіг, км</label>
+            <input class="input" id="shoe-initial" name="current_distance_km" type="number" min="0" step="0.1" value="0">
+          </div>
+          <button class="btn btn-primary btn-sm" type="submit">Зберегти кросівки</button>
         </form>
       </details>
+    </section>
+  </div>
+
+  <!-- ── звіт за місяць ──────────────────────────────────────────── -->
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Звіт за місяць</h2>
+      <form method="get" action="/">
+        <select class="select" name="report_month" onchange="this.form.submit()" style="min-width: 170px;">
+          {% for month in report_months %}
+          <option value="{{ month.value }}" {{ 'selected' if month.value == report_month }}>{{ month.label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+    <div class="report-grid">
+      <div>
+        <p class="stat-label">Дистанція</p>
+        <p class="stat-value">{{ report.current.distance_km|km }}<small>км</small></p>
+        {% set delta = report.delta.distance %}
+        <p class="delta {{ 'up' if delta and delta > 0 else ('down' if delta and delta < 0 else 'flat') }}">
+          {% if delta is none %}—{% elif delta > 0 %}▲ +{{ delta }}%{% elif delta < 0 %}▼ {{ delta }}%{% else %}0%{% endif %}
+          <span class="muted">до {{ report.previous_label }}</span>
+        </p>
+      </div>
+      <div>
+        <p class="stat-label">Тренування</p>
+        <p class="stat-value">{{ report.current.count }}</p>
+        {% set delta = report.delta.count %}
+        <p class="delta {{ 'up' if delta and delta > 0 else ('down' if delta and delta < 0 else 'flat') }}">
+          {% if delta is none %}—{% elif delta > 0 %}▲ +{{ delta }}%{% elif delta < 0 %}▼ {{ delta }}%{% else %}0%{% endif %}
+        </p>
+      </div>
+      <div>
+        <p class="stat-label">Час</p>
+        <p class="stat-value">{{ report.current.duration_sec|duration }}</p>
+        {% set delta = report.delta.duration %}
+        <p class="delta {{ 'up' if delta and delta > 0 else ('down' if delta and delta < 0 else 'flat') }}">
+          {% if delta is none %}—{% elif delta > 0 %}▲ +{{ delta }}%{% elif delta < 0 %}▼ {{ delta }}%{% else %}0%{% endif %}
+        </p>
+      </div>
+      <div>
+        <p class="stat-label">Набір висоти</p>
+        <p class="stat-value">{{ report.current.elevation_m }}<small>м</small></p>
+        {% set delta = report.delta.elevation %}
+        <p class="delta {{ 'up' if delta and delta > 0 else ('down' if delta and delta < 0 else 'flat') }}">
+          {% if delta is none %}—{% elif delta > 0 %}▲ +{{ delta }}%{% elif delta < 0 %}▼ {{ delta }}%{% else %}0%{% endif %}
+        </p>
+      </div>
+      <div>
+        <p class="stat-label">Середній темп</p>
+        <p class="stat-value">{{ report.current.avg_pace_sec|pace_km }}</p>
+        {% set delta = report.delta.pace %}
+        <p class="delta {{ 'flat' if delta is none else ('up' if delta > 0 else 'down') }}">
+          {% if delta is none %}—{% elif delta > 0 %}▲ +{{ delta }}%{% elif delta < 0 %}▼ {{ delta }}%{% else %}0%{% endif %}
+        </p>
+      </div>
+      <div>
+        <p class="stat-label">Попередній місяць</p>
+        <p class="stat-value" style="font-size: 20px;">{{ report.previous.distance_km|km }}<small>км</small></p>
+        <p class="stat-sub">{{ report.previous.count }} тренув.{% if not report.has_previous %} · немає даних{% endif %}</p>
+      </div>
     </div>
   </section>
+
+  <!-- ── стрічка ────────────────────────────────────────────────── -->
+  <section class="card card-pad">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title">Стрічка тренувань</h2>
+        <span class="muted small">{{ activities|length }} останніх</span>
+      </div>
+      <div class="row" style="gap: 6px;">
+        <a class="btn btn-sm btn-ghost" href="/export/activities.csv">⤓ CSV</a>
+        <a class="btn btn-sm btn-ghost" href="/export/backup.json">⤓ JSON-бекап</a>
+      </div>
+    </div>
+
+    {% if activities %}
+    <div class="feed">
+      {% for activity in activities %}
+      {% set weather = activity|weather %}
+      <div class="feed-item">
+        <div style="min-width: 0;">
+          <a class="feed-title" href="/activities/{{ activity.id }}">{{ activity.title }}</a>
+          <div class="feed-date">
+            {{ activity.date|date }}
+            {% if activity.shoe %} · {{ activity.shoe.name }}{% endif %}
+          </div>
+          <div class="feed-metrics">
+            <span class="chip"><b>{{ activity.distance_km|km }}</b> км</span>
+            <span class="chip"><b>{{ activity.avg_pace_sec|pace_km }}</b></span>
+            <span class="chip"><b>{{ activity.duration_sec|duration }}</b></span>
+            {% if activity.avg_hr %}
+            <span class="chip">❤️ <b>{{ activity.avg_hr }}</b>/{{ activity.max_hr }}</span>
+            {% endif %}
+            {% if activity.elevation_gain %}
+            <span class="chip">⛰️ <b>{{ activity.elevation_gain|round(0)|int }}</b> м</span>
+            {% endif %}
+            {% if weather %}
+            <span class="chip weather-chip" title="{{ weather.description }}">
+              {{ weather.icon }}{% if weather.temp_c is not none %} <b>{{ weather.temp_c }}°C</b>{% endif %}
+              {% if weather.wind_kmh is not none %} · {{ weather.wind_kmh }} км/год{% endif %}
+              {% if weather.precipitation_mm %} · {{ weather.precipitation_mm }} мм{% endif %}
+            </span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="feed-actions">
+          <a class="btn btn-sm btn-ghost" href="/activities/{{ activity.id }}/edit" title="Редагувати">✎</a>
+          <form action="/activities/{{ activity.id }}/delete" method="post"
+                onsubmit="return confirm('Видалити тренування «{{ activity.title }}»? Пробіг кросівок буде перераховано.')">
+            <button class="btn btn-sm btn-danger" type="submit" title="Видалити">✕</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-icon">🏃‍♂️</div>
+      <p style="margin-top: 8px; font-weight: 700; color: var(--text);">Поки що порожньо</p>
+      <p class="small">Завантаж перший .gpx або .fit — і тут з'явиться статистика, стрік і челенджі.</p>
+    </div>
+    {% endif %}
+  </section>
 </div>
-
-<!-- ── стрічка тренувань ─────────────────────────────────────────────── -->
-<section class="mt-8">
-  <div class="mb-3 flex flex-wrap items-end justify-between gap-3">
-    <div>
-      <h2 class="text-lg font-bold">Стрічка тренувань</h2>
-      <span class="text-xs text-slate-400">{{ activities|length }} останніх</span>
-    </div>
-    <div class="flex items-center gap-2 text-xs">
-      <span class="hidden text-slate-400 sm:inline">Експорт:</span>
-      <a href="/export/activities.csv"
-         class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-600">
-        ⤓ CSV
-      </a>
-      <a href="/export/backup.json"
-         class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-600">
-        ⤓ JSON-бекап
-      </a>
-    </div>
-  </div>
-
-  {% if activities %}
-  <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-    <div class="overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-400">
-          <tr>
-            <th class="px-4 py-3 font-semibold">Дата</th>
-            <th class="px-4 py-3 font-semibold">Тренування</th>
-            <th class="px-4 py-3 text-right font-semibold">Км</th>
-            <th class="px-4 py-3 text-right font-semibold">Темп</th>
-            <th class="px-4 py-3 text-right font-semibold">Час</th>
-            <th class="px-4 py-3 text-right font-semibold">Пульс</th>
-            <th class="px-4 py-3 font-semibold">Кросівки</th>
-            <th class="px-4 py-3"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          {% for activity in activities %}
-          <tr class="transition hover:bg-orange-50/40">
-            <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ activity.date|date }}</td>
-            <td class="px-4 py-3">
-              <a href="/activities/{{ activity.id }}" class="font-semibold text-slate-800 hover:text-orange-600">
-                {{ activity.title }}
-              </a>
-            </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold">{{ activity.distance_km|km }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ activity.avg_pace_sec|pace_km }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ activity.duration_sec|duration }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">
-              {% if activity.avg_hr %}{{ activity.avg_hr }}<span class="text-xs text-slate-400">/{{ activity.max_hr }}</span>{% else %}—{% endif %}
-            </td>
-            <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ activity.shoe.name if activity.shoe else "—" }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right">
-              <div class="flex items-center justify-end gap-1">
-                <a href="/activities/{{ activity.id }}/edit" title="Редагувати"
-                   class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">✎</a>
-                <form action="/activities/{{ activity.id }}/delete" method="post"
-                      onsubmit="return confirm('Видалити тренування «{{ activity.title }}»? Пробіг кросівок буде перераховано.')">
-                  <button type="submit" title="Видалити" class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-red-50 hover:text-red-600">✕</button>
-                </form>
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-  {% else %}
-  <div class="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
-    <p class="text-4xl">🏃‍♂️</p>
-    <p class="mt-3 font-semibold text-slate-700">Поки що порожньо</p>
-    <p class="mt-1 text-sm text-slate-500">Завантаж перший .gpx або .fit — і тут з'явиться твоя статистика.</p>
-  </div>
-  {% endif %}
-</section>
-{% endblock %}
-
-{% block scripts %}
-<script src="/static/app.js"></script>
 {% endblock %}
