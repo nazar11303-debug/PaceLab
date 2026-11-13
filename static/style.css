@@ -1,0 +1,41 @@
+/* RunTracker — невеликі доповнення до Tailwind */
+
+.dropzone {
+  outline: none;
+}
+
+.dropzone-active {
+  border-color: #f97316 !important;
+  background-color: rgba(249, 115, 22, 0.08) !important;
+  transform: scale(1.01);
+}
+
+/* Плавніший перехід плиток статистики */
+article {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+article:hover {
+  box-shadow: 0 8px 20px -12px rgba(15, 23, 42, 0.25);
+}
+
+/* Leaflet всередині круглої картки */
+#map .leaflet-control-attribution {
+  font-size: 10px;
+}
+
+/* Кастомний маркер details */
+details > summary {
+  list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Акуратніший скрол для таблиць на маленьких екранах */
+@media (max-width: 640px) {
+  table {
+    font-size: 12px;
+  }
+}

@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}RunTracker — тренування{% endblock %}
+
+{% block content %}
+<!-- ── статистика ───────────────────────────────────────────────────── -->
+<section class="grid gap-4 sm:grid-cols-3">
+  {% for key, label in [("week", "Цей тиждень"), ("month", "Цей місяць"), ("year", "Цей рік")] %}
+  {% set s = stats[key] %}
+  <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">{{ label }}</p>
+    <p class="mt-2 text-3xl font-extrabold tracking-tight">
+      {{ s.distance_km|km }}<span class="ml-1 text-base font-semibold text-slate-400">км</span>
+    </p>
+    <p class="mt-1 text-sm text-slate-500">
+      {{ s.count }} тренув. · {{ s.duration_sec|duration }}
+    </p>
+    <p class="mt-3 flex items-center justify-between text-xs text-slate-400">
+      <span>набір: {{ s.elevation_m }} м</span>
+      <span>темп: {{ s.avg_pace_sec|pace_km }}</span>
+    </p>
+  </article>
+  {% endfor %}
+</section>
+
+<div class="mt-6 grid gap-6 lg:grid-cols-3">
+  <!-- ── завантаження ───────────────────────────────────────────────── -->
+  <section class="lg:col-span-2">
+    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 class="text-lg font-bold">Завантажити тренування</h2>
+      <p class="mt-1 text-sm text-slate-500">Перетягни файл <b>.gpx</b> або <b>.fit</b> у зону нижче, обери кросівки та натисни «Додати». Повторний імпорт того самого тренування відхиляється.</p>
+
+      <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mt-4 space-y-4">
+        <label id="dropzone" for="file-input"
+               class="dropzone flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center transition hover:border-orange-400 hover:bg-orange-50/40">
+          <span class="text-4xl">📈</span>
+          <span class="mt-3 text-sm font-semibold text-slate-700">Перетягни файл сюди або клікни, щоб обрати</span>
+          <span class="mt-1 text-xs text-slate-400">.gpx та .fit — максимум 50 МБ</span>
+          <span id="file-name" class="mt-3 hidden rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700"></span>
+          <input id="file-input" name="file" type="file" accept=".gpx,.fit" class="sr-only" required>
+        </label>
+
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div class="flex-1">
+            <label for="shoe-select" class="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-400">Кросівки</label>
+            <select id="shoe-select" name="shoe_id"
+                    class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-orange-400 focus:outline-none">
+              <option value="">Без кросівок</option>
+              {% for shoe in active_shoes %}
+              <option value="{{ shoe.id }}">{{ shoe.name }}{% if shoe.brand %} · {{ shoe.brand }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit"
+                  class="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600">
+            Додати тренування
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ── кросівки ───────────────────────────────────────────────────── -->
+  <section>
+    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">Кросівки</h2>
+        <span class="text-xs text-slate-400">{{ shoes|length }} пар</span>
+      </div>
+
+      <div class="mt-3 space-y-3">
+        {% for shoe in shoes %}
+        <div class="rounded-xl border {{ 'border-slate-200 bg-white' if shoe.is_active else 'border-slate-100 bg-slate-50 opacity-80' }} p-3">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold">{{ shoe.name }}</p>
+              <p class="text-xs text-slate-400">{{ shoe.brand or "без бренду" }}</p>
+            </div>
+            <div class="flex shrink-0 items-center gap-1">
+              <a href="/shoes/{{ shoe.id }}/edit" title="Редагувати"
+                 class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">✎</a>
+              <form action="/shoes/{{ shoe.id }}/toggle" method="post">
+                <button type="submit" title="{{ 'Архівувати' if shoe.is_active else 'Повернути з архіву' }}"
+                        class="rounded-lg px-2 py-1 text-xs font-medium transition {{ 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' if shoe.is_active else 'bg-slate-100 text-slate-500 hover:bg-slate-200' }}">
+                  {{ "активні" if shoe.is_active else "архів" }}
+                </button>
+              </form>
+              <form action="/shoes/{{ shoe.id }}/delete" method="post"
+                    onsubmit="return confirm('Видалити кросівки «{{ shoe.name }}»? Тренування залишаться, але без прив’язки.')">
+                <button type="submit" title="Видалити"
+                        class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-red-50 hover:text-red-600">✕</button>
+              </form>
+            </div>
+          </div>
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div class="h-full rounded-full {{ 'bg-orange-500' if shoe.wear_percent < 80 else 'bg-red-500' }}"
+                 style="width: {{ shoe.wear_percent }}%"></div>
+          </div>
+          <p class="mt-1 flex justify-between text-[11px] text-slate-400">
+            <span>{{ "%.1f"|format(shoe.current_distance_km) }} / {{ "%.0f"|format(shoe.max_distance_km) }} км</span>
+            <span>знос {{ shoe.wear_percent }}%</span>
+          </p>
+        </div>
+        {% endfor %}
+        {% if not shoes %}
+        <p class="text-sm text-slate-400">Ще немає кросівок — додай перші нижче.</p>
+        {% endif %}
+      </div>
+
+      <details class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <summary class="cursor-pointer text-sm font-semibold text-slate-600">+ Додати кросівки</summary>
+        <form action="/shoes" method="post" class="mt-3 space-y-2">
+          <input name="name" required placeholder="Назва (напр. Pegasus 41)"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
+          <div class="flex gap-2">
+            <input name="brand" placeholder="Бренд"
+                   class="w-1/2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
+            <input name="max_distance_km" type="number" min="1" step="1" placeholder="Ресурс, км" value="700"
+                   class="w-1/2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
+          </div>
+          <input name="current_distance_km" type="number" min="0" step="0.1" placeholder="Початковий пробіг, км (для вже біганих)" value="0"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-orange-400 focus:outline-none">
+          <button type="submit"
+                  class="w-full rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-slate-700">
+            Зберегти
+          </button>
+        </form>
+      </details>
+    </div>
+  </section>
+</div>
+
+<!-- ── стрічка тренувань ─────────────────────────────────────────────── -->
+<section class="mt-8">
+  <div class="mb-3 flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <h2 class="text-lg font-bold">Стрічка тренувань</h2>
+      <span class="text-xs text-slate-400">{{ activities|length }} останніх</span>
+    </div>
+    <div class="flex items-center gap-2 text-xs">
+      <span class="hidden text-slate-400 sm:inline">Експорт:</span>
+      <a href="/export/activities.csv"
+         class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-600">
+        ⤓ CSV
+      </a>
+      <a href="/export/backup.json"
+         class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-600">
+        ⤓ JSON-бекап
+      </a>
+    </div>
+  </div>
+
+  {% if activities %}
+  <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-400">
+          <tr>
+            <th class="px-4 py-3 font-semibold">Дата</th>
+            <th class="px-4 py-3 font-semibold">Тренування</th>
+            <th class="px-4 py-3 text-right font-semibold">Км</th>
+            <th class="px-4 py-3 text-right font-semibold">Темп</th>
+            <th class="px-4 py-3 text-right font-semibold">Час</th>
+            <th class="px-4 py-3 text-right font-semibold">Пульс</th>
+            <th class="px-4 py-3 font-semibold">Кросівки</th>
+            <th class="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for activity in activities %}
+          <tr class="transition hover:bg-orange-50/40">
+            <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ activity.date|date }}</td>
+            <td class="px-4 py-3">
+              <a href="/activities/{{ activity.id }}" class="font-semibold text-slate-800 hover:text-orange-600">
+                {{ activity.title }}
+              </a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold">{{ activity.distance_km|km }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ activity.avg_pace_sec|pace_km }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ activity.duration_sec|duration }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">
+              {% if activity.avg_hr %}{{ activity.avg_hr }}<span class="text-xs text-slate-400">/{{ activity.max_hr }}</span>{% else %}—{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ activity.shoe.name if activity.shoe else "—" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <div class="flex items-center justify-end gap-1">
+                <a href="/activities/{{ activity.id }}/edit" title="Редагувати"
+                   class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">✎</a>
+                <form action="/activities/{{ activity.id }}/delete" method="post"
+                      onsubmit="return confirm('Видалити тренування «{{ activity.title }}»? Пробіг кросівок буде перераховано.')">
+                  <button type="submit" title="Видалити" class="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-red-50 hover:text-red-600">✕</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+    <p class="text-4xl">🏃‍♂️</p>
+    <p class="mt-3 font-semibold text-slate-700">Поки що порожньо</p>
+    <p class="mt-1 text-sm text-slate-500">Завантаж перший .gpx або .fit — і тут з'явиться твоя статистика.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}

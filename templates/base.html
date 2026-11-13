@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}RunTracker — аналіз бігу{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
+  <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+      <a href="/" class="flex items-center gap-2 text-xl font-extrabold tracking-tight">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500 text-lg text-white shadow-sm">🏃</span>
+        <span>Run<span class="text-orange-500">Tracker</span></span>
+      </a>
+      <nav class="flex items-center gap-4 text-sm text-slate-500">
+        <a href="/" class="transition hover:text-orange-600">Тренування</a>
+        <a href="/healthz" class="hidden transition hover:text-orange-600 sm:inline">API</a>
+        <span class="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500 sm:inline">локально · SQLite</span>
+      </nav>
+    </div>
+  </header>
+
+  {% if message or error %}
+  <div class="mx-auto mt-4 max-w-6xl px-4">
+    {% if error %}
+    <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{{ error }}</div>
+    {% endif %}
+    {% if message %}
+    <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{{ message }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <main class="mx-auto max-w-6xl px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="mx-auto max-w-6xl px-4 pb-8 text-xs text-slate-400">
+    RunTracker — персональний аналіз бігу. Дані зберігаються лише в локальній SQLite.
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

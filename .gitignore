@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Локальні дані застосунку (створюються при запуску)
+runtracker.db
+uploads/*
+!uploads/.gitkeep
+
+# Робочі папки проєкту (див. AGENTS.md)
+_backup/
+_tmp/
+
+# Тимчасові файли
+.tmp/
+install.log
+docs/.chrome-profile/
