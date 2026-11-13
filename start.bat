@@ -4,45 +4,48 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title RunTracker 3.0
 
-rem ── перший запуск: venv + залежності ───────────────────────────────────
+rem --- first run: venv + dependencies -----------------------------------
 if not exist ".venv\Scripts\python.exe" (
-    echo [RunTracker] Створюю віртуальне середовище...
+    echo [RunTracker] Creating virtual environment...
     python -m venv .venv
     if errorlevel 1 goto :setup_failed
-    echo [RunTracker] Встановлюю залежності...
+    echo [RunTracker] Installing dependencies...
     ".venv\Scripts\python.exe" -m pip install --quiet -r requirements.txt
     if errorlevel 1 goto :setup_failed
 )
 
-rem ── локальна IP-адреса для доступу з телефона ─────────────────────────
+rem --- LAN IP for phone access (ExecutionPolicy Bypass) -----------------
 set "LAN_IP="
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -File "tools\lan_ip.ps1"`) do set "LAN_IP=%%i"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -File "tools\lan_ip.ps1" 2^>nul`) do set "LAN_IP=%%i"
 if "%LAN_IP%"=="" set "LAN_IP=127.0.0.1"
 
-echo ============================================================
-echo   RunTracker 3.0 — персональна аналітика бігу
-echo.
-echo   На цьому ПК:  http://127.0.0.1:8000
-echo   Для відкриття з телефона у Wi-Fi: http://%LAN_IP%:8000
-echo.
-echo   Сервер слухає 0.0.0.0:8000 — доступний у локальній мережі.
-echo   Зупинити сервер: Ctrl+C
-echo ============================================================
-echo.
+rem --- Ukrainian banner is printed by a UTF-8 PowerShell helper ---------
+powershell -NoProfile -ExecutionPolicy Bypass -File "tools\console_banner.ps1"
 
-rem ── через 2 секунди відкрити браузер на ПК (helper, не блокує консоль) ─
-start "" /b powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:8000'"
+rem --- wait for /healthz (HTTP 200, up to 15 s), then open the browser --
+set "BROWSER_ARG=-OpenBrowser"
+if /i "%RUNTRAKER_NO_BROWSER%"=="1" set "BROWSER_ARG="
+start "" /b powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "tools\wait_for_server.ps1" %BROWSER_ARG%
 
 ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+rem --- never close the console silently on failure ---------------------
+if errorlevel 1 (
+    echo.
+    echo [RunTracker] ERROR: the server exited with a non-zero code.
+    echo Check the error text above and fix the cause.
+    pause
+    exit /b 1
+)
+
 echo.
-echo [RunTracker] Сервер зупинено.
+echo [RunTracker] Server stopped.
 pause
 exit /b 0
 
 :setup_failed
 echo.
-echo [RunTracker] Не вдалося підготувати середовище.
-echo Перевір, що Python 3.11+ встановлений і доступний у PATH.
+echo [RunTracker] Failed to prepare the environment.
+echo Make sure Python 3.11+ is installed and available in PATH.
 pause
 exit /b 1

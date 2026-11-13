@@ -1,4 +1,4 @@
-$ErrorActionPreference = "SilentlyContinue"
+﻿$ErrorActionPreference = "SilentlyContinue"
 
 function Get-PrivateIPv4 {
     $addresses = Get-NetIPAddress -AddressFamily IPv4 |

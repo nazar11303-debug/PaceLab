@@ -181,9 +181,16 @@ check("адаптивні медіа-запити", "@media (max-width: 760px)" 
 # start.bat
 start_bat = (PROJECT / "start.bat").read_text(encoding="utf-8")
 check("start.bat: host 0.0.0.0 і --reload", "--host 0.0.0.0" in start_bat and "--reload" in start_bat)
-check("start.bat: LAN-підказка", "Для відкриття з телефона у Wi-Fi" in start_bat)
-check("start.bat: затримка 2 с перед браузером", "Start-Sleep -Seconds 2" in start_bat)
+banner_text = (PROJECT / "tools" / "console_banner.ps1").read_text(encoding="utf-8-sig")
+check("LAN-підказка для телефона (банер-хелпер)",
+      "console_banner.ps1" in start_bat and "Для відкриття з телефона у Wi-Fi" in banner_text)
+check("start.bat: активна перевірка /healthz (до 15 с)",
+      "wait_for_server.ps1" in start_bat and "/healthz" in (PROJECT / "tools" / "wait_for_server.ps1").read_text(encoding="utf-8"))
+check("start.bat: ExecutionPolicy Bypass для обох .ps1", start_bat.count("-ExecutionPolicy Bypass") >= 2)
+check("start.bat: не закриває вікно при збої (if errorlevel 1 + pause)",
+      "if errorlevel 1" in start_bat and "pause" in start_bat)
 check("lan_ip.ps1 існує", (PROJECT / "tools" / "lan_ip.ps1").is_file())
+check("wait_for_server.ps1 існує", (PROJECT / "tools" / "wait_for_server.ps1").is_file())
 
 # --------------------------------------------------------------------------- #
 #  2. імпорт + погода
