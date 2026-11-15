@@ -37,6 +37,13 @@
         <p class="muted small" style="margin-top: 4px;">При зміні кросівок пробіг старої пари зменшиться, а нової — збільшиться на {{ activity.distance_km|km }} км.</p>
       </div>
 
+      <div>
+        <label class="label" for="avg_hr">Середній пульс (уд/хв)</label>
+        <input class="input" id="avg_hr" name="avg_hr" type="number" min="30" max="230" step="1"
+               value="{{ activity.avg_hr if activity.avg_hr else '' }}" placeholder="необов'язково">
+        <p class="muted small" style="margin-top: 4px;">Враховується у пульсових зонах Z1–Z5 та навантаженні, якщо у файлі немає даних пульсу.</p>
+      </div>
+
       <div class="row-between">
         <a class="btn" href="/activities/{{ activity.id }}">Скасувати</a>
         <button class="btn btn-primary" type="submit">Зберегти</button>

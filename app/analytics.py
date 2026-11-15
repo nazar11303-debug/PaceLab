@@ -241,6 +241,15 @@ def available_report_months(db: Session, limit: int = 24) -> list[dict]:
 # --------------------------------------------------------------------------- #
 #  heart-rate zones
 # --------------------------------------------------------------------------- #
+def _zone_index(hr: int, lower_bounds: list[float]) -> int:
+    """Index of the HR zone whose lower bound the sample reaches (0 = lowest)."""
+    index = 0
+    for position, lower in enumerate(lower_bounds):
+        if hr >= lower:
+            index = position
+    return index
+
+
 def hr_zone_analysis(db: Session) -> dict:
     """Time spent in Z1–Z5 based on the highest observed max HR."""
     activities = _all_activities(db)
@@ -252,6 +261,12 @@ def hr_zone_analysis(db: Session) -> dict:
     zone_seconds = [0.0] * len(HR_ZONES)
     for activity in activities:
         points = [p for p in activity.points if p.get("hr") and p.get("t")]
+        if not points:
+            # немає пер-точкового пульсу — зараховуємо всю тривалість за середнім пульсом
+            if activity.avg_hr:
+                index = _zone_index(activity.avg_hr, lower_bounds)
+                zone_seconds[index] += float(activity.duration_sec or 0)
+            continue
         for previous, current in zip(points, points[1:]):
             start_time = _parse_point_time(previous.get("t"))
             end_time = _parse_point_time(current.get("t"))
@@ -260,11 +275,7 @@ def hr_zone_analysis(db: Session) -> dict:
             delta = (end_time - start_time).total_seconds()
             if delta <= 0 or delta > 120:
                 continue
-            hr = current["hr"]
-            index = 0
-            for position, lower in enumerate(lower_bounds):
-                if hr >= lower:
-                    index = position
+            index = _zone_index(current["hr"], lower_bounds)
             zone_seconds[index] += delta
 
     total_seconds = sum(zone_seconds)

@@ -1,13 +1,11 @@
 /* PaceLab service worker: офлайн-оболонка + кеш статики. */
 
-const CACHE_NAME = "pacelab-v3";
+const CACHE_NAME = "pacelab-v4";
 const SHELL_ASSETS = [
   "/",
   "/static/style.css",
   "/static/app.js",
-  "/static/icons/icon-192.png",
-  "/static/icons/icon-512.png",
-  "/static/icons/icon.svg",
+  "/static/logo.png",
   "/manifest.json"
 ];
 

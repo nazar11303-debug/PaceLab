@@ -65,7 +65,7 @@ PaceLab/
 │   ├── app.js           # drag&drop + реєстрація service worker
 │   ├── manifest.json    # PWA
 │   ├── sw.js            # офлайн-оболонка
-│   └── icons/           # 192/512/svg
+│   └── logo.png         # логотип (favicon + PWA-іконка)
 ├── tools/
 │   ├── stage3_test.py   # автотести етапу 3 (66 перевірок)
 │   ├── smoke_test.py    # автотести етапу 2

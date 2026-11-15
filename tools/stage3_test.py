@@ -155,7 +155,7 @@ for path, marker in [
     ("/manifest.json", "start_url"),
     ("/sw.js", "CACHE_NAME"),
     ("/static/style.css", "#fc4c02"),
-    ("/static/icons/icon-192.png", ""),
+    ("/static/logo.png", ""),
 ]:
     status, body, headers = get(path)
     expected_marker = marker in body if marker else True

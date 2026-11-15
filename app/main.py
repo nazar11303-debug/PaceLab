@@ -222,6 +222,24 @@ def _parse_float(value: str, default: float) -> float:
         return default
 
 
+def _parse_hr(value: str) -> int | None:
+    """Parse the optional manual average-HR field; ``None`` if empty/invalid."""
+    cleaned = (value or "").strip()
+    if not cleaned.isdigit():
+        return None
+    hr = int(cleaned)
+    return hr if 30 <= hr <= 230 else None
+
+
+def _has_point_hr(activity: Activity) -> bool:
+    """Whether the source track carries per-point pulse data."""
+    try:
+        points = json.loads(activity.raw_points_json or "{}").get("points") or []
+    except (ValueError, AttributeError):
+        return False
+    return any(point.get("hr") for point in points)
+
+
 def _duplicate_message(activity: Activity) -> str:
     return (
         f"Це тренування вже є в історії: «{activity.title}» від {fmt_date(activity.date)} "
@@ -326,6 +344,7 @@ def home(
 async def upload_activity(
     file: UploadFile = File(...),
     shoe_id: str = Form(""),
+    avg_hr: str = Form(""),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     original_name = file.filename or ""
@@ -378,13 +397,16 @@ async def upload_activity(
     if shoe_id.isdigit():
         selected_shoe = db.get(Shoe, int(shoe_id))
 
+    # пульс, введений вручну, використовується лише коли у файлі його немає
+    manual_hr = _parse_hr(avg_hr)
+
     activity = Activity(
         title=payload["title"][:200],
         date=payload["date"],
         distance_km=payload["distance_km"],
         duration_sec=payload["duration_sec"],
         avg_pace_sec=payload["avg_pace_sec"],
-        avg_hr=payload["avg_hr"],
+        avg_hr=payload["avg_hr"] if payload["avg_hr"] else manual_hr,
         max_hr=payload["max_hr"],
         elevation_gain=payload["elevation_gain"],
         shoe_id=selected_shoe.id if selected_shoe else None,
@@ -480,6 +502,7 @@ def activity_update(
     title: str = Form(...),
     date: str = Form(...),
     shoe_id: str = Form(""),
+    avg_hr: str = Form(""),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     activity = db.execute(
@@ -514,6 +537,9 @@ def activity_update(
     activity.title = title.strip()[:200] or activity.title
     activity.date = new_date
     activity.shoe_id = new_shoe_id
+    # ручний пульс застосовується лише коли у вихідному треку немає пер-точкових даних
+    if not _has_point_hr(activity):
+        activity.avg_hr = _parse_hr(avg_hr)
     db.commit()
 
     return _message(f"Тренування «{activity.title}» оновлено")

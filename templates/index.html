@@ -102,7 +102,7 @@
         <h2 class="card-title">Завантажити тренування</h2>
         <span class="badge badge-blue" title="Погода підтягується автоматично">🌤️ погода авто</span>
       </div>
-      <p class="muted small">Перетягни <b>.gpx</b> або <b>.fit</b>, обери кросівки та натисни «Додати». Дублі відхиляються, погода підтягується за координатами старту.</p>
+      <p class="muted small">Перетягни <b>.gpx</b> або <b>.fit</b>, обери кросівки та натисни «Додати». Дублі відхиляються, погода підтягується за координатами старту. Якщо у файлі немає пульсу — вкажи середній вручну.</p>
 
       <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mt-md">
         <label id="dropzone" for="file-input" class="dropzone">
@@ -122,6 +122,10 @@
               <option value="{{ shoe.id }}">{{ shoe.name }}{% if shoe.brand %} · {{ shoe.brand }}{% endif %}</option>
               {% endfor %}
             </select>
+          </div>
+          <div style="width: 200px;">
+            <label class="label" for="avg-hr">Середній пульс (уд/хв)</label>
+            <input class="input" id="avg-hr" name="avg_hr" type="number" min="30" max="230" step="1" placeholder="необов'язково">
           </div>
           <button class="btn btn-primary" type="submit">Додати тренування</button>
         </div>
