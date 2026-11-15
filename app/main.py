@@ -52,7 +52,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="RunTracker", description="Персональний аналіз бігових тренувань", lifespan=lifespan)
+app = FastAPI(title="PaceLab", description="Персональний аналіз бігових тренувань", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -262,7 +262,7 @@ def _find_duplicate(db: Session, file_hash: str, payload: dict | None = None) ->
 # --------------------------------------------------------------------------- #
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "app": "runtracker"}
+    return {"status": "ok", "app": "PaceLab"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -701,7 +701,7 @@ def export_activities_csv(db: Session = Depends(get_db)) -> Response:
             ]
         )
 
-    filename = f"runtracker-activities-{datetime.now():%Y%m%d-%H%M}.csv"
+    filename = f"PaceLab-activities-{datetime.now():%Y%m%d-%H%M}.csv"
     content = ("\ufeff" + buffer.getvalue()).encode("utf-8")  # BOM keeps Excel happy
     return Response(
         content=content,
@@ -720,7 +720,7 @@ def export_backup_json(db: Session = Depends(get_db)) -> Response:
     )
 
     payload = {
-        "app": "runtracker",
+        "app": "PaceLab",
         "version": 2,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "shoes": [
@@ -755,7 +755,7 @@ def export_backup_json(db: Session = Depends(get_db)) -> Response:
         ],
     }
 
-    filename = f"runtracker-backup-{datetime.now():%Y%m%d-%H%M}.json"
+    filename = f"PaceLab-backup-{datetime.now():%Y%m%d-%H%M}.json"
     return Response(
         content=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
         media_type="application/json",
@@ -766,8 +766,8 @@ def export_backup_json(db: Session = Depends(get_db)) -> Response:
 # --------------------------------------------------------------------------- #
 #  analytics, heatmap, route builder, challenge goals
 # --------------------------------------------------------------------------- #
-#: Київ / Троєщина — центр за замовчуванням для всіх карт без треку
-KIEV_CENTER = (50.517, 30.605)
+#: Київ (центр) — точка за замовчуванням для всіх карт без треку
+KIEV_CENTER = (50.4501, 30.5234)
 
 
 @app.get("/analytics", response_class=HTMLResponse)
@@ -894,3 +894,4 @@ def service_worker() -> Response:
     """Service worker must be served from the root scope to control the app."""
     script = (STATIC_DIR / "sw.js").read_text(encoding="utf-8")
     return Response(content=script, media_type="application/javascript")
+

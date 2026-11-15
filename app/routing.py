@@ -30,7 +30,7 @@ class RouteInputError(RouteError):
 
 
 def _request_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "RunTracker/3.0 (+local)"})
+    request = urllib.request.Request(url, headers={"User-Agent": "PaceLab/3.0 (+local)"})
     with urllib.request.urlopen(request, timeout=TIMEOUT_SEC) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -147,7 +147,7 @@ def build_route(waypoints: list) -> dict:
     else:
         coords_with_ele = [[lat, lon, 0.0] for lat, lon in coords]
 
-    gpx_text = route_to_gpx(coords_with_ele, name="RunTracker route")
+    gpx_text = route_to_gpx(coords_with_ele, name="PaceLab route")
     return {
         "coords": coords,
         "coords_with_elevation": coords_with_ele,
@@ -159,12 +159,12 @@ def build_route(waypoints: list) -> dict:
     }
 
 
-def route_to_gpx(coords_with_elevation: list[list[float]], name: str = "RunTracker route") -> str:
+def route_to_gpx(coords_with_elevation: list[list[float]], name: str = "PaceLab route") -> str:
     """Serialize ``[[lat, lon, ele], ...]`` into a GPX 1.1 track."""
     start = datetime.now().replace(microsecond=0)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        '<gpx version="1.1" creator="RunTracker route builder" xmlns="http://www.topografix.com/GPX/1/1">',
+        '<gpx version="1.1" creator="PaceLab route builder" xmlns="http://www.topografix.com/GPX/1/1">',
         "  <metadata>",
         f"    <name>{escape(name)}</name>",
         "  </metadata>",
@@ -187,3 +187,4 @@ def route_to_gpx(coords_with_elevation: list[list[float]], name: str = "RunTrack
         )
     lines += ["    </trkseg>", "  </trk>", "</gpx>"]
     return "\n".join(lines)
+

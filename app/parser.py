@@ -447,3 +447,4 @@ def parse_activity_file(path: str | Path, filename_hint: str | None = None) -> d
     if payload["distance_km"] <= 0 and payload["duration_sec"] <= 0:
         raise ParseError("Не вдалося визначити дистанцію чи тривалість тренування")
     return payload
+

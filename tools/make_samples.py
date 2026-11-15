@@ -47,7 +47,7 @@ for index in range(total_steps + 1):
 
 gpx_lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<gpx version="1.1" creator="RunTracker sample generator" xmlns="http://www.topografix.com/GPX/1/1" '
+    '<gpx version="1.1" creator="PaceLab sample generator" xmlns="http://www.topografix.com/GPX/1/1" '
     'xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">',
     f"  <metadata><name>{TITLE}</name></metadata>",
     "  <trk>",
@@ -126,3 +126,4 @@ file_without_crc = header + bytes(body)
 fit_path = SAMPLES / "sample_run.fit"
 fit_path.write_bytes(file_without_crc + struct.pack("<H", fit_crc(file_without_crc)))
 print("FIT written:", fit_path, fit_path.stat().st_size, "bytes")
+

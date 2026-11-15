@@ -528,3 +528,4 @@ def heatmap_years(db: Session) -> list[int]:
     if not years:
         years.add(date.today().year)
     return sorted(years, reverse=True)
+

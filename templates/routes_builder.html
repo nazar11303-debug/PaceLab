@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Конструктор маршрутів — RunTracker{% endblock %}
+{% block title %}Конструктор маршрутів — PaceLab{% endblock %}
 
 {% block content %}
 <div class="stack">
@@ -80,11 +80,23 @@
   const statsEl = document.getElementById("route-stats");
   const downloadBtn = document.getElementById("download-btn");
 
-  const map = L.map(mapEl).setView(defaultCenter, 13);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors"
+  // Карта Києва — центр [50.4501, 30.5234], без обмеження меж перетягування
+  const map = L.map(mapEl).setView([50.4501, 30.5234], 12);
+
+  // 4 базові шари + перемикач
+  const streetLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, detectRetina: true, attribution: 'Esri' });
+  const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, detectRetina: true, attribution: 'Esri' });
+  const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, detectRetina: true, attribution: 'OpenTopoMap' });
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, detectRetina: true, attribution: 'OSM' });
+
+  streetLayer.addTo(map);
+  L.control.layers({
+    "Esri Street": streetLayer,
+    "Esri Satellite": satelliteLayer,
+    "OpenTopoMap": topoLayer,
+    "OSM": osmLayer
   }).addTo(map);
+
   const markers = L.featureGroup().addTo(map);
   const guide = L.featureGroup().addTo(map);
 
@@ -182,7 +194,7 @@
     const blob = new Blob([lastGpx], { type: "application/gpx+xml" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = "runtracker-route.gpx";
+    link.download = "PaceLab-route.gpx";
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -192,3 +204,6 @@
   renderWaypoints();
 </script>
 {% endblock %}
+
+
+

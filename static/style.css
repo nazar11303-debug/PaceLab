@@ -1,4 +1,4 @@
-/* RunTracker 3.0 — темна спортивна тема (Sunset / Strava-like) */
+/* PaceLab — темна спортивна тема (Sunset / Strava-like) */
 
 :root {
   --bg: #0d1117;
@@ -29,7 +29,7 @@
 *::before,
 *::after { box-sizing: border-box; }
 
-html { color-scheme: dark; -webkit-text-size-adjust: 100%; }
+html { color-scheme: dark; -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
 
 html, body { overflow-x: hidden; }
 
@@ -94,6 +94,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ── layout ────────────────────────────────────────────────────────────── */
 .page { max-width: 1200px; margin: 0 auto; padding: 22px 20px 40px; }
+/* якір кросівок: заголовок не ховається під липкою шапкою */
+#shoes { scroll-margin-top: 80px; }
 .footer {
   max-width: 1200px; margin: 0 auto; padding: 0 20px 34px;
   color: #57606a; font-size: 12px;
@@ -363,3 +365,4 @@ td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: t
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat-value { font-size: 23px; }
 }
+

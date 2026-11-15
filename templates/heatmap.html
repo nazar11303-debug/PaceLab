@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Мапа тренувань (Heatmap) — RunTracker{% endblock %}
+{% block title %}Мапа тренувань (Heatmap) — PaceLab{% endblock %}
 
 {% block content %}
 <div class="stack">
@@ -34,7 +34,7 @@
     <div id="heatmap" class="map map-lg"></div>
     <div class="legend mt-sm">
       <span><span class="legend-dot" style="background:#fc4c02"></span>тренування</span>
-      <span><span class="legend-dot" style="background:#58a6ff"></span>центр Києва / Троєщина</span>
+      <span><span class="legend-dot" style="background:#58a6ff"></span>центр Києва</span>
       <span class="muted">товщина лінії залежить від кількості точок</span>
     </div>
     {% if not tracks %}
@@ -52,10 +52,21 @@
   const defaultCenter = {{ default_center|tojson }};
   const mapEl = document.getElementById("heatmap");
   if (mapEl && window.L) {
-    const map = L.map(mapEl).setView(defaultCenter, 13);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "&copy; OpenStreetMap contributors"
+    // Карта Києва — центр [50.4501, 30.5234], без обмеження меж перетягування
+    const map = L.map(mapEl).setView([50.4501, 30.5234], 12);
+
+    // 4 базові шари + перемикач
+    const streetLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, detectRetina: true, attribution: 'Esri' });
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, detectRetina: true, attribution: 'Esri' });
+    const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, detectRetina: true, attribution: 'OpenTopoMap' });
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, detectRetina: true, attribution: 'OSM' });
+
+    streetLayer.addTo(map);
+    L.control.layers({
+      "Esri Street": streetLayer,
+      "Esri Satellite": satelliteLayer,
+      "OpenTopoMap": topoLayer,
+      "OSM": osmLayer
     }).addTo(map);
 
     const group = L.featureGroup().addTo(map);
@@ -72,7 +83,7 @@
     });
 
     L.circleMarker(defaultCenter, { radius: 5, color: "#58a6ff", fillColor: "#58a6ff", fillOpacity: 0.9 })
-      .addTo(map).bindPopup("Київ / Троєщина");
+      .addTo(map).bindPopup("Київ");
 
     if (tracks.length && group.getBounds().isValid()) {
       map.fitBounds(group.getBounds().pad(0.12));
@@ -80,3 +91,6 @@
   }
 </script>
 {% endblock %}
+
+
+

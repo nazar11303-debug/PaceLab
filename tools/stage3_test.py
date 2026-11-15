@@ -21,7 +21,7 @@ import uuid
 
 BASE = "http://127.0.0.1:8000"
 PROJECT = pathlib.Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT / "runtracker.db"
+DB_PATH = PROJECT / "PaceLab.db"
 SAMPLES = PROJECT / "sample_data"
 WORK_DIR = PROJECT / "_tmp"
 WORK_DIR.mkdir(exist_ok=True)
@@ -134,7 +134,7 @@ def table_columns(table: str) -> list[str]:
     return [row["name"] for row in db_rows(f"PRAGMA table_info('{table}')")]
 
 
-print("=== RunTracker Stage 3 autotests ===\n")
+print("=== PaceLab Stage 3 autotests ===\n")
 
 # --------------------------------------------------------------------------- #
 #  1. базові сторінки та PWA
@@ -381,3 +381,4 @@ if notes:
     for item in notes:
         print(" ·", item)
 sys.exit(0 if passed == len(results) else 1)
+

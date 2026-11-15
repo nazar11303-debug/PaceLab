@@ -9,9 +9,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "runtracker.db"
+DB_PATH = BASE_DIR / "PaceLab.db"
 
-logger = logging.getLogger("runtracker.db")
+logger = logging.getLogger("PaceLab.db")
 
 engine = create_engine(
     f"sqlite:///{DB_PATH}",
@@ -79,3 +79,4 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _apply_column_migrations()
+

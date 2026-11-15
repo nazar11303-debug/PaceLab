@@ -1,4 +1,4 @@
-# RunTracker 3.0 🏃
+# PaceLab 🏃
 
 Локальний веб-додаток для аналізу бігових тренувань — персональний аналог
 **Strava Premium** без підписок і хмари. Усі дані зберігаються в SQLite на твоєму
@@ -38,7 +38,7 @@
 Ручний запуск:
 
 ```powershell
-cd runtracker
+cd PaceLab
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -49,7 +49,7 @@ python -m venv .venv
 ## Структура
 
 ```
-runtracker/
+PaceLab/
 ├── app/
 │   ├── main.py          # роути: імпорт, CRUD, експорти, аналітика, heatmap, маршрути, погода
 │   ├── models.py        # Activity (+file_hash, weather_json), Shoe, AppSettings
@@ -101,7 +101,7 @@ runtracker/
   з попереднім місяцем.
 
 ### Мапи
-- Усі Leaflet-карти без треку центруються на **Київ / Троєщину (50.517, 30.605, zoom 13)**;
+- Усі Leaflet-карти без треку центруються на **центр Києва (50.4501, 30.5234, zoom 13)**;
   тайли OSM затемнюються CSS-фільтром під темну тему.
 - **`/heatmap`** — усі треки на одній карті, фільтр за роком/місяцем.
 - **`/routes/builder`** — клік по карті додає точки, маршрут прокладається пішки
@@ -174,3 +174,4 @@ runtracker/
 - PWA-встановлення з телефона: на LAN-IP без HTTPS Chrome показує лише
   «Додати на головний екран» (ярлик); повний standalone-режим — на `localhost`.
 - Спліти по 1 км; ручні кола/інтервали з файлу не читаються.
+

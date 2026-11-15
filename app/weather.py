@@ -58,7 +58,7 @@ def describe_code(code: int | None) -> tuple[str, str]:
 
 
 def _get_json(url: str) -> dict | None:
-    request = urllib.request.Request(url, headers={"User-Agent": "RunTracker/3.0 (+local)"})
+    request = urllib.request.Request(url, headers={"User-Agent": "PaceLab/3.0 (+local)"})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SEC) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -152,3 +152,4 @@ def badge_from_json(raw: str | None) -> dict | None:
     data.setdefault("icon", "🌡️")
     data.setdefault("description", "")
     return data
+

@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "SilentlyContinue"
 
 function Get-PrivateIPv4 {
     $addresses = Get-NetIPAddress -AddressFamily IPv4 |
@@ -33,3 +33,4 @@ $ip = Get-PrivateIPv4
 if (-not $ip) { $ip = Get-IPv4FromIpconfig }
 if (-not $ip) { $ip = "127.0.0.1" }
 Write-Output $ip
+

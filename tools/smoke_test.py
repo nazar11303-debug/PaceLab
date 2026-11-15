@@ -1,4 +1,4 @@
-"""End-to-end smoke test for RunTracker (standard library only).
+"""End-to-end smoke test for PaceLab (standard library only).
 
 Checks (fresh database, running server on 127.0.0.1:8000):
 
@@ -28,7 +28,7 @@ import uuid
 
 BASE = "http://127.0.0.1:8000"
 PROJECT = pathlib.Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT / "runtracker.db"
+DB_PATH = PROJECT / "PaceLab.db"
 SAMPLES = PROJECT / "sample_data"
 #: тимчасові файли тесту — тільки всередині проєкту (див. AGENTS.md)
 WORK_DIR = PROJECT / "_tmp"
@@ -63,7 +63,7 @@ def post_form(path: str, fields: dict[str, str]) -> tuple[int, str]:
 
 
 def post_file(path: str, fields: dict[str, str], file_path: pathlib.Path) -> tuple[int, str]:
-    boundary = "----RunTrackerBoundary" + uuid.uuid4().hex
+    boundary = "----PaceLabBoundary" + uuid.uuid4().hex
     parts: list[bytes] = []
     for name, value in fields.items():
         parts.append(
@@ -126,7 +126,7 @@ def check(label: str, condition: bool, detail: str = "") -> bool:
 # --------------------------------------------------------------------------- #
 #  0. preconditions
 # --------------------------------------------------------------------------- #
-print("=== RunTracker smoke test (етап 2) ===\n")
+print("=== PaceLab smoke test (етап 2) ===\n")
 status, html, _ = get("/")
 check("сервер відповідає на / (200)", status == 200, f"HTTP {status}")
 check("застосунок стартує порожнім (без демо-даних)", activity_count() == 0, f"activities={activity_count()}")
@@ -282,3 +282,4 @@ check("неіснуюче тренування → 404", status == 404, f"HTTP {
 passed = sum(1 for item in results if item)
 print(f"\n{passed}/{len(results)} checks passed")
 sys.exit(0 if passed == len(results) else 1)
+

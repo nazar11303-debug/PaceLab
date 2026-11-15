@@ -1,6 +1,6 @@
-/* RunTracker 3.0 service worker: офлайн-оболонка + кеш статики. */
+/* PaceLab service worker: офлайн-оболонка + кеш статики. */
 
-const CACHE_NAME = "runtracker-v3";
+const CACHE_NAME = "pacelab-v3";
 const SHELL_ASSETS = [
   "/",
   "/static/style.css",
@@ -65,3 +65,5 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
+
+

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}{{ activity.title }} — RunTracker{% endblock %}
+{% block title %}{{ activity.title }} вЂ” PaceLab{% endblock %}
 
 {% block content %}
 {% set weather = activity|weather %}
 <div class="stack">
   <div>
-    <a href="/" class="muted small">← До стрічки</a>
+    <a href="/" class="muted small">в†ђ Р”Рѕ СЃС‚СЂС–С‡РєРё</a>
   </div>
 
   <header class="row-between">
@@ -13,17 +13,17 @@
       <h1 style="font-size: 26px; font-weight: 800; letter-spacing: -0.6px;">{{ activity.title }}</h1>
       <p class="muted small" style="margin-top: 4px;">
         {{ activity.date|date }}
-        {% if activity.shoe %} · <span style="color: var(--text);">{{ activity.shoe.name }}</span>{% endif %}
+        {% if activity.shoe %} В· <span style="color: var(--text);">{{ activity.shoe.name }}</span>{% endif %}
         {% if weather %}
-        · <span class="badge weather-chip">{{ weather.icon }} {{ weather.description }}</span>
+        В· <span class="badge weather-chip">{{ weather.icon }} {{ weather.description }}</span>
         {% endif %}
       </p>
     </div>
     <div class="row">
-      <a class="btn btn-sm" href="/activities/{{ activity.id }}/edit">Редагувати</a>
+      <a class="btn btn-sm" href="/activities/{{ activity.id }}/edit">Р РµРґР°РіСѓРІР°С‚Рё</a>
       <form action="/activities/{{ activity.id }}/delete" method="post"
-            onsubmit="return confirm('Видалити це тренування? Пробіг кросівок буде перераховано.')">
-        <button class="btn btn-sm btn-danger" type="submit">Видалити</button>
+            onsubmit="return confirm('Р’РёРґР°Р»РёС‚Рё С†Рµ С‚СЂРµРЅСѓРІР°РЅРЅСЏ? РџСЂРѕР±С–Рі РєСЂРѕСЃС–РІРѕРє Р±СѓРґРµ РїРµСЂРµСЂР°С…РѕРІР°РЅРѕ.')">
+        <button class="btn btn-sm btn-danger" type="submit">Р’РёРґР°Р»РёС‚Рё</button>
       </form>
     </div>
   </header>
@@ -31,26 +31,26 @@
   {% if weather %}
   <section class="card card-pad">
     <div class="row-between">
-      <span class="section-title">Погода на старті</span>
+      <span class="section-title">РџРѕРіРѕРґР° РЅР° СЃС‚Р°СЂС‚С–</span>
       <span class="badge badge-blue">{{ weather.icon }} {{ weather.description }}</span>
     </div>
     <div class="row mt-sm" style="gap: 18px;">
-      {% if weather.temp_c is not none %}<span class="chip">🌡️ <b>{{ weather.temp_c }} °C</b></span>{% endif %}
-      {% if weather.wind_kmh is not none %}<span class="chip">💨 <b>{{ weather.wind_kmh }}</b> км/год</span>{% endif %}
-      {% if weather.precipitation_mm is not none %}<span class="chip">☔ <b>{{ weather.precipitation_mm }}</b> мм</span>{% endif %}
+      {% if weather.temp_c is not none %}<span class="chip">рџЊЎпёЏ <b>{{ weather.temp_c }} В°C</b></span>{% endif %}
+      {% if weather.wind_kmh is not none %}<span class="chip">рџ’Ё <b>{{ weather.wind_kmh }}</b> РєРј/РіРѕРґ</span>{% endif %}
+      {% if weather.precipitation_mm is not none %}<span class="chip">в�” <b>{{ weather.precipitation_mm }}</b> РјРј</span>{% endif %}
     </div>
   </section>
   {% endif %}
 
-  <!-- ── метрики ───────────────────────────────────────────────────── -->
+  <!-- в”Ђв”Ђ РјРµС‚СЂРёРєРё в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ -->
   <section class="metrics-grid">
     {% set metrics = [
-      ("Дистанція", activity.distance_km|km ~ " км"),
-      ("Час", activity.duration_sec|duration),
-      ("Темп", activity.avg_pace_sec|pace_km),
-      ("Сер. пульс", (activity.avg_hr ~ "") if activity.avg_hr else "—"),
-      ("Макс. пульс", (activity.max_hr ~ "") if activity.max_hr else "—"),
-      ("Набір висоти", (activity.elevation_gain|round(0)|int ~ " м")),
+      ("Р”РёСЃС‚Р°РЅС†С–СЏ", activity.distance_km|km ~ " РєРј"),
+      ("Р§Р°СЃ", activity.duration_sec|duration),
+      ("РўРµРјРї", activity.avg_pace_sec|pace_km),
+      ("РЎРµСЂ. РїСѓР»СЊСЃ", (activity.avg_hr ~ "") if activity.avg_hr else "вЂ”"),
+      ("РњР°РєСЃ. РїСѓР»СЊСЃ", (activity.max_hr ~ "") if activity.max_hr else "вЂ”"),
+      ("РќР°Р±С–СЂ РІРёСЃРѕС‚Рё", (activity.elevation_gain|round(0)|int ~ " Рј")),
     ] %}
     {% for label, value in metrics %}
     <div class="card metric">
@@ -60,56 +60,56 @@
     {% endfor %}
   </section>
 
-  <!-- ── карта ─────────────────────────────────────────────────────── -->
+  <!-- в”Ђв”Ђ РєР°СЂС‚Р° в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ -->
   <section class="card map-card">
     <div class="card-head" style="margin-bottom: 10px;">
-      <h2 class="section-title">Маршрут</h2>
-      <span class="muted small">{{ points|length }} точок GPS</span>
+      <h2 class="section-title">РњР°СЂС€СЂСѓС‚</h2>
+      <span class="muted small">{{ points|length }} С‚РѕС‡РѕРє GPS</span>
     </div>
     <div id="map" class="map"></div>
     {% if not activity.has_gps %}
-    <p class="map-hint">GPS-координат немає — карта показує Київ / Троєщину за замовчуванням.</p>
+    <p class="map-hint">GPS-РєРѕРѕСЂРґРёРЅР°С‚ РЅРµРјР°С” вЂ” РєР°СЂС‚Р° РїРѕРєР°Р·СѓС” РљРёС—РІ / РўСЂРѕС”С‰РёРЅСѓ Р·Р° Р·Р°РјРѕРІС‡СѓРІР°РЅРЅСЏРј.</p>
     {% endif %}
   </section>
 
-  <!-- ── графік ────────────────────────────────────────────────────── -->
+  <!-- в”Ђв”Ђ РіСЂР°С„С–Рє в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ -->
   <section class="card card-pad">
     <div class="card-head">
-      <h2 class="card-title">Темп і пульс по кілометрах</h2>
-      <span class="muted small">швидше — вище</span>
+      <h2 class="card-title">РўРµРјРї С– РїСѓР»СЊСЃ РїРѕ РєС–Р»РѕРјРµС‚СЂР°С…</h2>
+      <span class="muted small">С€РІРёРґС€Рµ вЂ” РІРёС‰Рµ</span>
     </div>
     {% if splits %}
     <div style="height: 300px;"><canvas id="paceChart"></canvas></div>
     {% else %}
-    <div class="empty"><div class="empty-icon">📉</div><p class="small">Недостатньо даних для сплітів.</p></div>
+    <div class="empty"><div class="empty-icon">рџ“‰</div><p class="small">РќРµРґРѕСЃС‚Р°С‚РЅСЊРѕ РґР°РЅРёС… РґР»СЏ СЃРїР»С–С‚С–РІ.</p></div>
     {% endif %}
   </section>
 
-  <!-- ── спліти ────────────────────────────────────────────────────── -->
+  <!-- в”Ђв”Ђ СЃРїР»С–С‚Рё в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ -->
   {% if splits %}
   <section class="card card-pad">
-    <div class="card-head"><h2 class="card-title">Спліти</h2><span class="muted small">{{ splits|length }} кіл</span></div>
+    <div class="card-head"><h2 class="card-title">РЎРїР»С–С‚Рё</h2><span class="muted small">{{ splits|length }} РєС–Р»</span></div>
     <div class="table-wrap">
       <table class="data">
         <thead>
           <tr>
-            <th>Км</th>
-            <th class="num">Темп</th>
-            <th class="num">Час кола</th>
-            <th class="num">Пульс</th>
-            <th class="num">Набір</th>
+            <th>РљРј</th>
+            <th class="num">РўРµРјРї</th>
+            <th class="num">Р§Р°СЃ РєРѕР»Р°</th>
+            <th class="num">РџСѓР»СЊСЃ</th>
+            <th class="num">РќР°Р±С–СЂ</th>
           </tr>
         </thead>
         <tbody>
           {% for split in splits %}
           <tr>
             <td>
-              {{ split.km }}{% if split.partial %}<span class="muted small"> · {{ "%.2f"|format(split.distance_km) }} км</span>{% endif %}
+              {{ split.km }}{% if split.partial %}<span class="muted small"> В· {{ "%.2f"|format(split.distance_km) }} РєРј</span>{% endif %}
             </td>
             <td class="num">{{ split.pace_sec|pace_km }}</td>
             <td class="num">{{ split.duration_sec|duration }}</td>
-            <td class="num">{{ split.avg_hr or "—" }}</td>
-            <td class="num">{{ split.elevation_m|round(0)|int }} м</td>
+            <td class="num">{{ split.avg_hr or "вЂ”" }}</td>
+            <td class="num">{{ split.elevation_m|round(0)|int }} Рј</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -127,38 +127,70 @@
 <script>
   const points = {{ points|tojson }};
   const splits = {{ splits|tojson }};
-  const DEFAULT_CENTER = [50.517, 30.605];
+  const DEFAULT_CENTER = [50.4501, 30.5234];
   const DEFAULT_ZOOM = 13;
   const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
   const TILE_ATTR = '&copy; OpenStreetMap contributors';
 
   function fmtPace(sec) {
-    if (!sec && sec !== 0) return "—";
+    if (!sec && sec !== 0) return "вЂ”";
     const total = Math.round(sec);
     return String(Math.floor(total / 60)).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
   }
 
-  // ── карта ──────────────────────────────────────────────────────────
+  // в”Ђв”Ђ РєР°СЂС‚Р° в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   const gps = points.filter(p => p.lat !== null && p.lon !== null);
   const mapEl = document.getElementById("map");
   if (mapEl && window.L) {
     const map = L.map(mapEl).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
-    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTR }).addTo(map);
+    // 1) Вулиці HD (Esri)
+const streetLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri',
+    detectRetina: true
+});
+
+// 2) Супутник HD (Esri)
+const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri',
+    detectRetina: true
+});
+
+// 3) Рельєф (OpenTopoMap)
+const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap',
+    detectRetina: true
+});
+
+// 4) Стандартна (OSM)
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    detectRetina: true
+});
+
+const baseMaps = {
+    'Вулиці HD (Esri)': streetLayer,
+    'Супутник HD (Esri)': satelliteLayer,
+    'Рельєф (OpenTopoMap)': topoLayer,
+    'Стандартна (OSM)': osmLayer
+};
+
+streetLayer.addTo(map);
+L.control.layers(baseMaps).addTo(map);
 
     if (gps.length > 1) {
       const line = L.polyline(gps.map(p => [p.lat, p.lon]), { color: "#fc4c02", weight: 4, opacity: 0.95 }).addTo(map);
       map.fitBounds(line.getBounds(), { padding: [26, 26] });
       L.circleMarker([gps[0].lat, gps[0].lon], { radius: 7, color: "#3fb950", fillColor: "#3fb950", fillOpacity: 1 })
-        .addTo(map).bindPopup("Старт");
+        .addTo(map).bindPopup("РЎС‚Р°СЂС‚");
       const last = gps[gps.length - 1];
       L.circleMarker([last.lat, last.lon], { radius: 7, color: "#f85149", fillColor: "#f85149", fillOpacity: 1 })
-        .addTo(map).bindPopup("Фініш");
+        .addTo(map).bindPopup("Р¤С–РЅС–С€");
     } else if (gps.length === 1) {
       map.setView([gps[0].lat, gps[0].lon], 16);
     }
   }
 
-  // ── графік ─────────────────────────────────────────────────────────
+  // в”Ђв”Ђ РіСЂР°С„С–Рє в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   const chartEl = document.getElementById("paceChart");
   if (chartEl && splits.length && window.Chart) {
     Chart.defaults.color = "#8b949e";
@@ -169,7 +201,7 @@
         labels: splits.map(s => s.km + (s.partial ? "*" : "")),
         datasets: [
           {
-            label: "Темп, хв/км",
+            label: "РўРµРјРї, С…РІ/РєРј",
             data: splits.map(s => s.pace_sec),
             borderColor: "#fc4c02",
             backgroundColor: "rgba(252,76,2,0.16)",
@@ -181,7 +213,7 @@
             fill: true
           },
           {
-            label: "Пульс, уд/хв",
+            label: "РџСѓР»СЊСЃ, СѓРґ/С…РІ",
             data: splits.map(s => s.avg_hr),
             borderColor: "#58a6ff",
             backgroundColor: "rgba(88,166,255,0.1)",
@@ -203,28 +235,28 @@
             callbacks: {
               label: function (context) {
                 if (context.dataset.yAxisID === "y") {
-                  return "Темп: " + fmtPace(context.parsed.y) + " /км";
+                  return "РўРµРјРї: " + fmtPace(context.parsed.y) + " /РєРј";
                 }
                 if (context.parsed.y === null || context.parsed.y === undefined) {
-                  return "Пульс: —";
+                  return "РџСѓР»СЊСЃ: вЂ”";
                 }
-                return "Пульс: " + context.parsed.y + " уд/хв";
+                return "РџСѓР»СЊСЃ: " + context.parsed.y + " СѓРґ/С…РІ";
               }
             }
           }
         },
         scales: {
-          x: { title: { display: true, text: "Кілометр" }, grid: { color: "rgba(255,255,255,0.05)" } },
+          x: { title: { display: true, text: "РљС–Р»РѕРјРµС‚СЂ" }, grid: { color: "rgba(255,255,255,0.05)" } },
           y: {
             position: "left",
-            reverse: true,  // швидший темп (менше секунд) — вище
-            title: { display: true, text: "Темп, хв/км" },
+            reverse: true,  // С€РІРёРґС€РёР№ С‚РµРјРї (РјРµРЅС€Рµ СЃРµРєСѓРЅРґ) вЂ” РІРёС‰Рµ
+            title: { display: true, text: "РўРµРјРї, С…РІ/РєРј" },
             ticks: { callback: (value) => fmtPace(value) },
             grid: { color: "rgba(255,255,255,0.05)" }
           },
           y1: {
             position: "right",
-            title: { display: true, text: "Пульс" },
+            title: { display: true, text: "РџСѓР»СЊСЃ" },
             grid: { drawOnChartArea: false },
             beginAtZero: false
           }
@@ -234,3 +266,6 @@
   }
 </script>
 {% endblock %}
+
+
+

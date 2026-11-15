@@ -1,12 +1,12 @@
-п»їparam(
+param(
     [string]$HealthUrl = "http://127.0.0.1:8000/healthz",
     [string]$BrowserUrl = "http://127.0.0.1:8000",
     [int]$TimeoutSeconds = 15,
     [switch]$OpenBrowser
 )
 
-# РђРєС‚РёРІРЅР° РїРµСЂРµРІС–СЂРєР° РіРѕС‚РѕРІРЅРѕСЃС‚С–: С‡РµРєР°С”РјРѕ HTTP 200 РІС–Рґ /healthz (РґРѕ 15 СЃ),
-# С– Р»РёС€Рµ РїРѕС‚С–Рј РІС–РґРєСЂРёРІР°С”РјРѕ Р±СЂР°СѓР·РµСЂ вЂ” С†Рµ РїСЂРёР±РёСЂР°С” ERR_CONNECTION_REFUSED.
+# Активна перевірка готовності: чекаємо HTTP 200 від /healthz (до 15 с),
+# і лише потім відкриваємо браузер — це прибирає ERR_CONNECTION_REFUSED.
 $ErrorActionPreference = "SilentlyContinue"
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $ready = $false
@@ -19,25 +19,26 @@ while ((Get-Date) -lt $deadline) {
             break
         }
     } catch {
-        # СЃРµСЂРІРµСЂ С‰Рµ СЃС‚Р°СЂС‚СѓС” вЂ” РїСЂРѕРґРѕРІР¶СѓС”РјРѕ РѕРїРёС‚СѓРІР°РЅРЅСЏ
+        # сервер ще стартує — продовжуємо опитування
     }
     Start-Sleep -Milliseconds 400
 }
 
 if (-not $ready) {
-    Write-Output "[RunTracker] РЎРµСЂРІРµСЂ РЅРµ РІС–РґРїРѕРІС–РІ РЅР° $HealthUrl Р·Р° $TimeoutSeconds СЃ вЂ” РїРµСЂРµРІС–СЂ Р»РѕРіРё uvicorn РІРёС‰Рµ."
+    Write-Output "[PaceLab] Сервер не відповів на $HealthUrl за $TimeoutSeconds с — перевір логи uvicorn вище."
     exit 1
 }
 
-Write-Output "[RunTracker] РЎРµСЂРІРµСЂ РіРѕС‚РѕРІРёР№ (healthz 200)."
+Write-Output "[PaceLab] Сервер готовий (healthz 200)."
 
 if ($OpenBrowser -and $env:RUNTRAKER_NO_BROWSER -ne "1") {
     try {
         Start-Process $BrowserUrl
-        Write-Output "[RunTracker] Р’С–РґРєСЂРёРІР°СЋ $BrowserUrl Сѓ Р±СЂР°СѓР·РµСЂС–."
+        Write-Output "[PaceLab] Відкриваю $BrowserUrl у браузері."
     } catch {
-        Write-Output "[RunTracker] РќРµ РІРґР°Р»РѕСЃСЏ РІС–РґРєСЂРёС‚Рё Р±СЂР°СѓР·РµСЂ: $($_.Exception.Message)"
+        Write-Output "[PaceLab] Не вдалося відкрити браузер: $($_.Exception.Message)"
     }
 }
 
 exit 0
+

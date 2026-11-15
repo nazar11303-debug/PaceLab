@@ -2,14 +2,14 @@
 chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0"
-title RunTracker 3.0
+title PaceLab
 
 rem --- first run: venv + dependencies -----------------------------------
 if not exist ".venv\Scripts\python.exe" (
-    echo [RunTracker] Creating virtual environment...
+    echo [PaceLab] Creating virtual environment...
     python -m venv .venv
     if errorlevel 1 goto :setup_failed
-    echo [RunTracker] Installing dependencies...
+    echo [PaceLab] Installing dependencies...
     ".venv\Scripts\python.exe" -m pip install --quiet -r requirements.txt
     if errorlevel 1 goto :setup_failed
 )
@@ -32,20 +32,21 @@ start "" /b powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -F
 rem --- never close the console silently on failure ---------------------
 if errorlevel 1 (
     echo.
-    echo [RunTracker] ERROR: the server exited with a non-zero code.
+    echo [PaceLab] ERROR: the server exited with a non-zero code.
     echo Check the error text above and fix the cause.
     pause
     exit /b 1
 )
 
 echo.
-echo [RunTracker] Server stopped.
+echo [PaceLab] Server stopped.
 pause
 exit /b 0
 
 :setup_failed
 echo.
-echo [RunTracker] Failed to prepare the environment.
+echo [PaceLab] Failed to prepare the environment.
 echo Make sure Python 3.11+ is installed and available in PATH.
 pause
 exit /b 1
+
