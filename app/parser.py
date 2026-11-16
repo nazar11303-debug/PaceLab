@@ -17,6 +17,35 @@ EARTH_RADIUS_M = 6_371_000.0
 #: Cap on how many track points are persisted (keeps the JSON column light).
 MAX_STORED_POINTS = 4000
 
+#: Максимальна фізично можлива швидкість бігу (м/с ≈ 28.8 км/год). Сегменти
+#: швидші за це — GPS-«телепорти» (мультипат у місті), які інакше завищують
+#: дистанцію, «найкращі відрізки», GAP та прогноз VDOT.
+MAX_POINT_SPEED_MS = 8.0
+
+#: Енерговитрати рівнинного бігу за Мінетті (J·кг⁻¹·м⁻¹), Cr(0).
+MINETTI_FLAT_COST = 3.6
+#: Практичне обмеження ухилу, щоб поліном Мінетті лишався реалістичним.
+MAX_GRADE = 0.30
+
+
+def grade_adjusted_factor(grade: float) -> float:
+    """Множник «еквівалентної рівнинної» дистанції для сегмента з ухилом.
+
+    Повертає ``Cr(grade) / Cr(0)`` за поліномом Мінетті (2002): ``<1`` на спуску,
+    ``>1`` на підйомі. Ухил обмежується ±30 %, щоб уникнути нереалістичних значень.
+    """
+    i = max(-MAX_GRADE, min(MAX_GRADE, grade))
+    cost = (
+        155.4 * i**5
+        - 30.4 * i**4
+        - 43.3 * i**3
+        + 46.3 * i**2
+        + 19.5 * i
+        + MINETTI_FLAT_COST
+    )
+    cost = max(cost, 0.6)  # запобіжник для дуже стрімких спусків
+    return cost / MINETTI_FLAT_COST
+
 
 class ParseError(Exception):
     """Raised when an activity file cannot be parsed at all."""
@@ -54,6 +83,14 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * EARTH_RADIUS_M * math.asin(min(1.0, math.sqrt(a)))
 
 
+def is_implausible_segment(distance_m: float, delta_sec: float | None) -> bool:
+    """True, якщо сегмент фізично неможливий для бігу (стрибок GPS).
+
+    Без відомого часового кроку сегмент вважається прийнятним.
+    """
+    return delta_sec is not None and delta_sec > 0 and distance_m / delta_sec > MAX_POINT_SPEED_MS
+
+
 def _to_local(dt: datetime | None) -> datetime | None:
     """Normalize a timestamp to naive local time."""
     if dt is None:
@@ -63,13 +100,29 @@ def _to_local(dt: datetime | None) -> datetime | None:
     return dt.astimezone().replace(tzinfo=None)
 
 
+def _parse_iso_time(raw: Any) -> datetime | None:
+    """Parse a stored ISO timestamp (naive local time) into a ``datetime``."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+
+
 def _assign_distances(points: list[TrackPoint]) -> None:
-    """Fill ``distance_m`` with the cumulative 2D distance along the track."""
+    """Fill ``distance_m`` with the cumulative 2D distance along the track.
+
+    GPS-«телепорти» (сегменти з нереальною швидкістю) не додаються в дистанцію.
+    """
     total = 0.0
     prev: TrackPoint | None = None
     for point in points:
         if prev is not None and None not in (prev.lat, prev.lon, point.lat, point.lon):
-            total += _haversine_m(prev.lat, prev.lon, point.lat, point.lon)  # type: ignore[arg-type]
+            segment = _haversine_m(prev.lat, prev.lon, point.lat, point.lon)  # type: ignore[arg-type]
+            delta = (point.time - prev.time).total_seconds() if prev.time and point.time else None
+            if not is_implausible_segment(segment, delta):
+                total += segment
         point.distance_m = total
         prev = point
 
@@ -270,22 +323,17 @@ def _parse_fit(path: Path, fallback_title: str | None = None) -> RawTrack:
 # --------------------------------------------------------------------------- #
 #  splits & metrics
 # --------------------------------------------------------------------------- #
-def _compute_splits(points: list[TrackPoint]) -> list[dict[str, Any]]:
-    """1-km splits with interpolated crossing times and per-split heart rate."""
-    timed = [p for p in points if p.time is not None and p.distance_m is not None]
-    if len(timed) < 2:
-        return []
+def _splits_from_samples(
+    samples: list[tuple[float, float, int | None, float | None]],
+    total_distance: float,
+) -> list[dict[str, Any]]:
+    """1-km splits from ``(distance_m, elapsed_sec, hr, elevation)`` samples.
 
-    start_time = timed[0].time
-    total_distance = points[-1].distance_m
-    if total_distance < 100:  # too short for meaningful splits
+    Crossing times are linearly interpolated; each split reports pace, average
+    HR and the elevation gain/loss inside its distance window.
+    """
+    if len(samples) < 2 or total_distance < 100:  # too short for meaningful splits
         return []
-
-    # (distance_m, elapsed_sec, hr, elevation) samples
-    samples: list[tuple[float, float, int | None, float | None]] = []
-    for point in timed:
-        elapsed = (point.time - start_time).total_seconds()  # type: ignore[operator]
-        samples.append((point.distance_m, elapsed, point.hr, point.elevation))
 
     splits: list[dict[str, Any]] = []
 
@@ -301,19 +349,73 @@ def _compute_splits(points: list[TrackPoint]) -> list[dict[str, Any]]:
             previous = sample
         return samples[-1][1]
 
-    def segment_stats(lo: float, hi: float) -> tuple[int | None, float, int | None]:
-        """Average/max HR and elevation gain for the (lo, hi] distance window."""
+    elevation_profile = [(s[0], s[3]) for s in samples if s[3] is not None]
+
+    def elevation_at(distance_m: float) -> float | None:
+        """Interpolated elevation at any distance along the track."""
+        if not elevation_profile:
+            return None
+        previous = elevation_profile[0]
+        for current in elevation_profile:
+            if current[0] >= distance_m:
+                if current[0] == previous[0]:
+                    return current[1]
+                ratio = (distance_m - previous[0]) / (current[0] - previous[0])
+                return previous[1] + ratio * (current[1] - previous[1])
+            previous = current
+        return elevation_profile[-1][1]
+
+    def segment_stats(lo: float, hi: float) -> tuple[int | None, float, float]:
+        """Average HR and elevation gain/loss for the ``(lo, hi]`` window.
+
+        Boundary elevations are interpolated so gain/loss stays correct even for
+        sparsely sampled tracks (points landing exactly on kilometre marks).
+        """
         hrs = [s[2] for s in samples if lo < s[0] <= hi and s[2]]
         avg_hr = int(round(sum(hrs) / len(hrs))) if hrs else None
+
+        profile: list[float] = []
+        start_ele = elevation_at(lo)
+        if start_ele is not None:
+            profile.append(start_ele)
+        profile.extend(s[3] for s in samples if lo < s[0] < hi and s[3] is not None)
+        end_ele = elevation_at(hi)
+        if end_ele is not None:
+            profile.append(end_ele)
+
         gain = 0.0
-        prev_ele: float | None = None
-        for sample in samples:
-            if not lo < sample[0] <= hi or sample[3] is None:
+        loss = 0.0
+        for previous, current in zip(profile, profile[1:]):
+            if current > previous:
+                gain += current - previous
+            else:
+                loss += previous - current
+        return avg_hr, round(gain, 1), round(loss, 1)
+
+    def segment_gap(lo: float, hi: float) -> float | None:
+        """GAP (хв/км у секундах) для вікна ``(lo, hi]`` або ``None`` без висот.
+
+        Кожен під-сегмент зважується на енерговитрату Мінетті: час ділиться на
+        «еквівалентну рівнинну» дистанцію.
+        """
+        flat_m = 0.0
+        seconds = 0.0
+        has_elevation = False
+        for (d1, t1, _, e1), (d2, t2, _, e2) in zip(samples, samples[1:]):
+            if not lo < (d1 + d2) / 2 <= hi:
                 continue
-            if prev_ele is not None and sample[3] > prev_ele:
-                gain += sample[3] - prev_ele
-            prev_ele = sample[3]
-        return avg_hr, round(gain, 1), len(hrs)
+            delta_d, delta_t = d2 - d1, t2 - t1
+            if delta_d <= 0 or delta_t <= 0:
+                continue
+            seconds += delta_t
+            if e1 is not None and e2 is not None:
+                has_elevation = True
+                flat_m += delta_d * grade_adjusted_factor((e2 - e1) / delta_d)
+            else:
+                flat_m += delta_d
+        if not has_elevation or flat_m <= 0 or seconds <= 0:
+            return None
+        return round(seconds / (flat_m / 1000.0), 1)
 
     previous_boundary = 0.0
     previous_time = 0.0
@@ -321,15 +423,17 @@ def _compute_splits(points: list[TrackPoint]) -> list[dict[str, Any]]:
     km = 1
     while boundary <= total_distance + 1:
         split_time = elapsed_at(boundary)
-        avg_hr, gain, _ = segment_stats(previous_boundary, boundary)
+        avg_hr, gain, loss = segment_stats(previous_boundary, boundary)
         splits.append(
             {
                 "km": km,
                 "distance_km": 1.0,
                 "duration_sec": int(round(split_time - previous_time)),
                 "pace_sec": round((split_time - previous_time) / 1.0, 1),
+                "gap_sec": segment_gap(previous_boundary, boundary),
                 "avg_hr": avg_hr,
                 "elevation_m": gain,
+                "descent_m": loss,
                 "partial": False,
             }
         )
@@ -340,7 +444,7 @@ def _compute_splits(points: list[TrackPoint]) -> list[dict[str, Any]]:
     remaining = total_distance - previous_boundary
     if remaining > 50:  # keep the final partial kilometre
         split_time = samples[-1][1]
-        avg_hr, gain, _ = segment_stats(previous_boundary, total_distance + 1)
+        avg_hr, gain, loss = segment_stats(previous_boundary, total_distance + 1)
         duration = max(0.0, split_time - previous_time)
         splits.append(
             {
@@ -348,12 +452,113 @@ def _compute_splits(points: list[TrackPoint]) -> list[dict[str, Any]]:
                 "distance_km": round(remaining / 1000, 2),
                 "duration_sec": int(round(duration)),
                 "pace_sec": round(duration / (remaining / 1000), 1),
+                "gap_sec": segment_gap(previous_boundary, total_distance + 1),
                 "avg_hr": avg_hr,
                 "elevation_m": gain,
+                "descent_m": loss,
                 "partial": True,
             }
         )
     return splits
+
+
+def _gap_pace_from_samples(
+    samples: list[tuple[float, float, int | None, float | None]],
+) -> float | None:
+    """Середній GAP (сек/км) для всього треку або ``None``, якщо немає висот."""
+    flat_m = 0.0
+    seconds = 0.0
+    has_elevation = False
+    for (d1, t1, _, e1), (d2, t2, _, e2) in zip(samples, samples[1:]):
+        delta_d, delta_t = d2 - d1, t2 - t1
+        if delta_d <= 0 or delta_t <= 0:
+            continue
+        seconds += delta_t
+        if e1 is not None and e2 is not None:
+            has_elevation = True
+            flat_m += delta_d * grade_adjusted_factor((e2 - e1) / delta_d)
+        else:
+            flat_m += delta_d
+    if not has_elevation or flat_m <= 0 or seconds <= 0:
+        return None
+    return round(seconds / (flat_m / 1000.0), 1)
+
+
+def _samples_from_points(points: list[TrackPoint]) -> list[tuple[float, float, int | None, float | None]]:
+    """(distance_m, elapsed_sec, hr, elevation) з щойно розібраних точок треку."""
+    timed = [p for p in points if p.time is not None]
+    if len(timed) < 2:
+        return []
+    start_time = timed[0].time
+    return [
+        (point.distance_m, (point.time - start_time).total_seconds(), point.hr, point.elevation)  # type: ignore[operator]
+        for point in timed
+    ]
+
+
+def _compute_splits(points: list[TrackPoint]) -> list[dict[str, Any]]:
+    """1-km splits straight from freshly parsed track points."""
+    samples = _samples_from_points(points)
+    if not samples:
+        return []
+    return _splits_from_samples(samples, points[-1].distance_m)
+
+
+def _compute_gap(points: list[TrackPoint]) -> float | None:
+    """Середній GAP тренування з щойно розібраних точок треку."""
+    return _gap_pace_from_samples(_samples_from_points(points))
+
+
+def samples_from_point_dicts(
+    points: list[dict[str, Any]],
+) -> list[tuple[float, float, int | None, float | None]]:
+    """(distance_m, elapsed_sec, hr, elevation) зі збережених серіалізованих точок.
+
+    GPS-«телепорти» не додаються в дистанцію, тож спліти, GAP та ефективність
+    лишаються фізично коректними навіть для «брудних» треків.
+    """
+    samples: list[tuple[float, float, int | None, float | None]] = []
+    previous: tuple[float, float, datetime] | None = None
+    start_time: datetime | None = None
+    distance = 0.0
+
+    for point in points:
+        lat, lon = point.get("lat"), point.get("lon")
+        when = _parse_iso_time(point.get("t"))
+        if lat is None or lon is None or when is None:
+            continue
+        if previous is not None:
+            segment = _haversine_m(previous[0], previous[1], lat, lon)
+            delta = (when - previous[2]).total_seconds()
+            if not is_implausible_segment(segment, delta):
+                distance += segment
+        previous = (lat, lon, when)
+        if start_time is None:
+            start_time = when
+        elapsed = (when - start_time).total_seconds()
+        samples.append((distance, elapsed, point.get("hr"), point.get("ele")))
+
+    return samples
+
+
+def splits_from_point_dicts(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Recompute 1-km splits (gain **and** loss) from stored serialized points.
+
+    Used for activities saved before descent was tracked, so the detail page and
+    charts stay consistent for already-uploaded tracks.
+    """
+    samples = samples_from_point_dicts(points)
+    if not samples:
+        return []
+    return _splits_from_samples(samples, samples[-1][0])
+
+
+def gap_pace_from_point_dicts(points: list[dict[str, Any]]) -> float | None:
+    """Середній GAP тренування зі збережених точок (для старих треків теж)."""
+    samples = samples_from_point_dicts(points)
+    if len(samples) < 2:
+        return None
+    return _gap_pace_from_samples(samples)
 
 
 def _downsample(points: list[TrackPoint], limit: int = MAX_STORED_POINTS) -> list[TrackPoint]:

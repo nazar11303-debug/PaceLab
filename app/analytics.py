@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Activity
+from .parser import grade_adjusted_factor, samples_from_point_dicts
 
 MONTH_NAMES_UK = [
     "Січень",
@@ -406,42 +407,19 @@ def acwr(db: Session, today: date | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 #  personal records
 # --------------------------------------------------------------------------- #
-PR_DISTANCES_KM = [1.0, 5.0, 10.0, 21.1, 42.2]
+PR_DISTANCES_KM = [1.0, 3.0, 5.0, 10.0, 21.1]
 
 
 def _point_samples(activity: Activity) -> list[tuple[float, float]]:
-    """(elapsed_seconds, cumulative_metres) from GPS points with timestamps."""
-    points = []
-    for point in activity.points:
-        lat, lon = point.get("lat"), point.get("lon")
-        when = _parse_point_time(point.get("t"))
-        if lat is None or lon is None or when is None:
-            continue
-        points.append((lat, lon, when))
-    if len(points) < 2:
-        return []
+    """(elapsed_seconds, cumulative_metres) для пошуку «найкращих відрізків».
 
-    samples: list[tuple[float, float]] = []
-    start_time = points[0][2]
-    distance = 0.0
-    previous = points[0]
-    for current in points[1:]:
-        distance += _haversine_m(previous[0], previous[1], current[0], current[1])
-        elapsed = (current[2] - start_time).total_seconds()
-        if samples and elapsed <= samples[-1][0]:
-            elapsed = samples[-1][0] + 0.1
-        samples.append((elapsed, distance))
-        previous = current
-    return samples
-
-
-def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    radius = 6_371_000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = phi2 - phi1
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    return 2 * radius * math.asin(min(1.0, math.sqrt(a)))
+    Використовує спільний розбір точок, який відсіює GPS-«телепорти», тож
+    найкращі відрізки та VDOT лишаються фізично реалістичними.
+    """
+    return [
+        (elapsed, distance)
+        for distance, elapsed, _, _ in samples_from_point_dicts(activity.points)
+    ]
 
 
 def _best_time_for_distance(samples: list[tuple[float, float]], target_m: float) -> float | None:
@@ -496,6 +474,385 @@ def personal_records(db: Session) -> list[dict]:
                 }
         records.append(best or {"distance_km": distance_km, "time_sec": None})
     return records
+
+
+# --------------------------------------------------------------------------- #
+#  форма / відновлення (інтерпретація CTL-ATL-TSB)
+# --------------------------------------------------------------------------- #
+def form_status(fitness: dict) -> dict:
+    """Людиночитний статус форми за значенням TSB (Form = CTL − ATL)."""
+    tsb = fitness.get("tsb", 0.0) or 0.0
+    if tsb >= 20:
+        label, tone = "Пік форми", "peak"
+        advice = "Свіжість на максимумі — ідеальний момент для старту або контрольного тесту на результат."
+    elif tsb >= 5:
+        label, tone = "Оптимальне навантаження", "optimal"
+        advice = "Баланс форми й втоми — можна працювати в цільовому темпі без ризику."
+    elif tsb >= -10:
+        label, tone = "Продуктивне тренування", "building"
+        advice = "Ти в роботі: форма накопичується, тіло під помірним навантаженням."
+    elif tsb >= -30:
+        label, tone = "Висока втома", "fatigued"
+        advice = "Втома переважає — додай відновлювальні дні, сон і легкі пробіжки."
+    else:
+        label, tone = "Ризик перетренування", "overreaching"
+        advice = "Дуже глибока втома — знизь обсяг і інтенсивність, дай тілу відпочити 2–3 дні."
+    return {"tsb": round(tsb, 1), "label": label, "tone": tone, "advice": advice}
+
+
+def recovery_estimate(db: Session, today: date | None = None) -> dict:
+    """Приблизна оцінка годин до відновлення після останнього тренування."""
+    activities = _all_activities(db)
+    if not activities:
+        return {"hours": None, "remaining": None, "since": None, "ready": True, "activity": None}
+    last = activities[-1]
+    duration_h = (last.duration_sec or 0) / 3600
+    # інтенсивність за середнім пульсом (140 уд/хв ≈ рівень аеробного порогу)
+    intensity = max(0.5, (last.avg_hr or 140) / 140.0)
+    hours = max(6.0, min(72.0, duration_h * 12.0 * intensity))
+    hours_since = max(0.0, (datetime.now() - last.date).total_seconds() / 3600)
+    remaining = max(0.0, hours - hours_since)
+    return {
+        "hours": round(hours, 1),
+        "remaining": round(remaining, 1),
+        "since": round(hours_since, 1),
+        "ready": remaining <= 0.5,
+        "activity": {"id": last.id, "title": last.title, "date": last.date},
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  GAP-ефективність та розкладка
+# --------------------------------------------------------------------------- #
+def _interp_elapsed(
+    samples: list[tuple[float, float, int | None, float | None]], distance_m: float
+) -> float | None:
+    """Лінійна інтерполяція часу досягнення заданої дистанції."""
+    if not samples:
+        return None
+    previous = samples[0]
+    for sample in samples:
+        if sample[0] >= distance_m:
+            if sample[0] == previous[0]:
+                return sample[1]
+            ratio = (distance_m - previous[0]) / (sample[0] - previous[0])
+            return previous[1] + ratio * (sample[1] - previous[1])
+        previous = sample
+    return samples[-1][1]
+
+
+def _graded_speed_and_hr(
+    samples: list[tuple[float, float, int | None, float | None]],
+) -> tuple[float, float] | None:
+    """(швидкість за GAP, м/хв; середній пульс) для фрагмента треку."""
+    flat_m = 0.0
+    seconds = 0.0
+    has_elevation = False
+    for (d1, t1, _, e1), (d2, t2, _, e2) in zip(samples, samples[1:]):
+        delta_d, delta_t = d2 - d1, t2 - t1
+        if delta_d <= 0 or delta_t <= 0:
+            continue
+        seconds += delta_t
+        if e1 is not None and e2 is not None:
+            has_elevation = True
+            flat_m += delta_d * grade_adjusted_factor((e2 - e1) / delta_d)
+        else:
+            flat_m += delta_d
+    hrs = [s[2] for s in samples if s[2]]
+    if not has_elevation or flat_m <= 0 or seconds <= 0 or not hrs:
+        return None
+    return flat_m / (seconds / 60.0), sum(hrs) / len(hrs)
+
+
+def efficiency_metrics(
+    samples: list[tuple[float, float, int | None, float | None]],
+) -> dict | None:
+    """EF (GAP-швидкість / пульс) та аеробне розʼєднання (decoupling)."""
+    if len(samples) < 4:
+        return None
+    total = _graded_speed_and_hr(samples)
+    if total is None:
+        return None
+    graded_speed, avg_hr = total
+    if avg_hr <= 0:
+        return None
+    ef = graded_speed / avg_hr
+
+    half_distance = samples[-1][0] / 2
+    split_index = next((i for i, s in enumerate(samples) if s[0] >= half_distance), len(samples) - 1)
+    first = _graded_speed_and_hr(samples[: split_index + 1])
+    second = _graded_speed_and_hr(samples[split_index:])
+    decoupling = None
+    if first and second:
+        ef_first = first[0] / first[1]
+        ef_second = second[0] / second[1]
+        if ef_first > 0:
+            decoupling = round((ef_first - ef_second) / ef_first * 100, 1)
+
+    return {
+        "ef": round(ef, 2),
+        "graded_speed_m_min": round(graded_speed, 1),
+        "avg_hr": int(round(avg_hr)),
+        "decoupling_pct": decoupling,
+    }
+
+
+def ef_trend(db: Session, days: int = 30, today: date | None = None) -> list[dict]:
+    """Тренд Efficiency Factor за останні ``days`` днів (лише треки з пульсом)."""
+    today = today or date.today()
+    start = today - timedelta(days=days - 1)
+    series: list[dict] = []
+    for activity in _all_activities(db):
+        if _day(activity.date) < start:
+            continue
+        metrics = efficiency_metrics(samples_from_point_dicts(activity.points))
+        if not metrics:
+            continue
+        series.append(
+            {
+                "date": activity.date.isoformat(),
+                "label": activity.date.strftime("%d.%m"),
+                "ef": metrics["ef"],
+                "activity_id": activity.id,
+                "title": activity.title,
+            }
+        )
+    return series
+
+
+def pacing_analysis(
+    samples: list[tuple[float, float, int | None, float | None]],
+) -> dict | None:
+    """Тип розкладки забігу: Negative / Even / Positive split."""
+    if len(samples) < 4:
+        return None
+    total_distance = samples[-1][0]
+    total_time = samples[-1][1]
+    if total_distance < 1000 or total_time <= 0:
+        return None
+    half = total_distance / 2
+    half_time = _interp_elapsed(samples, half)
+    if half_time is None:
+        return None
+    first_pace = half_time / (half / 1000.0)
+    second_pace = (total_time - half_time) / ((total_distance - half) / 1000.0)
+    if first_pace <= 0 or second_pace <= 0:
+        return None
+    delta = (second_pace - first_pace) / first_pace * 100
+    if delta < -0.5:
+        kind, label = "negative", "Negative Split"
+        note = "Друга половина швидша за першу — зразкова розкладка."
+    elif delta > 0.5:
+        kind, label = "positive", "Positive Split"
+        note = "Друга половина повільніша — старт був занадто швидким."
+    else:
+        kind, label = "even", "Even Pace"
+        note = "Рівний темп протягом усієї пробіжки."
+    return {
+        "type": kind,
+        "label": label,
+        "note": note,
+        "delta_pct": round(delta, 1),
+        "first_pace": round(first_pace, 1),
+        "second_pace": round(second_pace, 1),
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  VDOT / VO2max та прогноз на дистанції (Джек Деніелс)
+# --------------------------------------------------------------------------- #
+#: Дистанції, за якими шукаємо найкращий відрізок для оцінки VDOT
+VDOT_SOURCE_DISTANCES_KM = [1.609, 3.0, 5.0, 10.0, 21.1]
+#: Класичні змагальні дистанції для прогнозу
+RACE_DISTANCES_KM = [5.0, 10.0, 21.1, 42.2]
+#: Тренувальні зони (частка від VDOT/VO2max за Деніелсом)
+TRAINING_ZONES = [
+    ("R", "Відновлювальний", 0.59, 0.65),
+    ("E", "Аеробний", 0.65, 0.79),
+    ("T", "Темповий", 0.83, 0.88),
+    ("I", "Інтервальний", 0.96, 1.00),
+]
+
+
+def _vo2_from_velocity(velocity_m_min: float) -> float:
+    return -4.60 + 0.182258 * velocity_m_min + 0.000104 * velocity_m_min**2
+
+
+def _pct_vo2max(duration_min: float) -> float:
+    return (
+        0.8
+        + 0.1894393 * math.exp(-0.012778 * duration_min)
+        + 0.2989558 * math.exp(-0.1932605 * duration_min)
+    )
+
+
+def _vdot_from_performance(distance_m: float, time_sec: float) -> float:
+    """VDOT за формулами Деніелса: VO2(max) на тривалість зусилля."""
+    if distance_m <= 0 or time_sec <= 0:
+        return 0.0
+    duration_min = time_sec / 60.0
+    velocity = distance_m / duration_min
+    percent = _pct_vo2max(duration_min)
+    if percent <= 0:
+        return 0.0
+    return _vo2_from_velocity(velocity) / percent
+
+
+def _time_for_distance(vdot: float, distance_m: float) -> float:
+    """Обернена задача: час (с) на дистанцію за відомого VDOT (бісекція)."""
+    low, high = 1.0, 900.0  # хвилини
+    for _ in range(90):
+        mid = (low + high) / 2
+        if _vdot_from_performance(distance_m, mid * 60.0) > vdot:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2 * 60.0
+
+
+def _velocity_for_vo2(vo2: float) -> float:
+    """Швидкість (м/хв), за якої споживання кисню дорівнює ``vo2``."""
+    a, b, c = 0.000104, 0.182258, -(vo2 + 4.60)
+    discriminant = b * b - 4 * a * c
+    if discriminant <= 0:
+        return 0.0
+    return (-b + math.sqrt(discriminant)) / (2 * a)
+
+
+def _pace_band(vdot: float, low_pct: float, high_pct: float) -> dict:
+    """Діапазон темпу (сек/км): від швидкого до повільного краю зони."""
+    fast = _velocity_for_vo2(vdot * high_pct)
+    slow = _velocity_for_vo2(vdot * low_pct)
+    return {
+        "pace_fast": round(60000.0 / fast, 1) if fast > 0 else None,
+        "pace_slow": round(60000.0 / slow, 1) if slow > 0 else None,
+    }
+
+
+def vdot_analysis(db: Session, weeks: int = 6, today: date | None = None) -> dict:
+    """Поточний VDOT за найкращими відрізками останніх ``weeks`` тижнів."""
+    today = today or date.today()
+    start = today - timedelta(days=weeks * 7)
+    activities = [a for a in _all_activities(db) if _day(a.date) >= start]
+
+    best_vdot = 0.0
+    source: dict | None = None
+    for activity in activities:
+        samples = _point_samples(activity)
+        if not samples:
+            continue
+        for distance_km in VDOT_SOURCE_DISTANCES_KM:
+            seconds = _best_time_for_distance(samples, distance_km * 1000)
+            if seconds is None:
+                continue
+            vdot = _vdot_from_performance(distance_km * 1000, seconds)
+            if vdot > best_vdot:
+                best_vdot = vdot
+                source = {
+                    "distance_km": distance_km,
+                    "time_sec": int(round(seconds)),
+                    "pace_sec": round(seconds / distance_km, 1),
+                    "activity_id": activity.id,
+                    "title": activity.title,
+                    "date": activity.date,
+                }
+
+    if best_vdot <= 0:
+        return {"vdot": None, "predictions": [], "zones": [], "source": None, "weeks": weeks}
+
+    predictions = []
+    for distance_km in RACE_DISTANCES_KM:
+        seconds = _time_for_distance(best_vdot, distance_km * 1000)
+        predictions.append(
+            {
+                "distance_km": distance_km,
+                "time_sec": int(round(seconds)),
+                "pace_sec": round(seconds / distance_km, 1),
+            }
+        )
+    zones = [
+        {"code": code, "name": name, **_pace_band(best_vdot, low, high)}
+        for code, name, low, high in TRAINING_ZONES
+    ]
+    return {
+        "vdot": round(best_vdot, 1),
+        "vo2max": round(best_vdot, 1),
+        "predictions": predictions,
+        "zones": zones,
+        "source": source,
+        "weeks": weeks,
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  досягнення та нагороди
+# --------------------------------------------------------------------------- #
+def achievements(db: Session, today: date | None = None) -> list[dict]:
+    """Автоматичні нагороди за мотивами тренувальної історії."""
+    today = today or date.today()
+    activities = _all_activities(db)
+
+    negative_runs = 0
+    for activity in activities:
+        if activity.distance_km < 5:
+            continue
+        pacing = pacing_analysis(samples_from_point_dicts(activity.points))
+        if pacing and pacing["type"] == "negative":
+            negative_runs += 1
+
+    max_ascent = max((a.elevation_gain or 0.0 for a in activities), default=0.0)
+    streak = compute_streak(db, today)["weeks"]
+
+    series = fitness_fatigue(db, days=90, today=today)["series"]
+    ctl_now = series[-1]["ctl"] if series else 0.0
+    ctl_prev = series[-15]["ctl"] if len(series) >= 15 else (series[0]["ctl"] if series else 0.0)
+    ctl_delta = round(ctl_now - ctl_prev, 1)
+
+    start, end = month_bounds(today.year, today.month)
+    month_km = round(sum(a.distance_km for a in activities if start <= _day(a.date) < end), 1)
+
+    return [
+        {
+            "key": "negative_split",
+            "icon": "⚡",
+            "title": "Negative Split майстер",
+            "description": "Забіг на 5+ км, де друга половина швидша за першу",
+            "unlocked": negative_runs >= 1,
+            "progress": f"{negative_runs}",
+        },
+        {
+            "key": "mountain_goat",
+            "icon": "⛰️",
+            "title": "Гірський козел",
+            "description": "Набір висоти 300+ м в одному тренуванні",
+            "unlocked": max_ascent >= 300,
+            "progress": f"{round(max_ascent)} м",
+        },
+        {
+            "key": "steel_week",
+            "icon": "🛡️",
+            "title": "Сталевий тиждень",
+            "description": "4+ тижні поспіль із пробіжками",
+            "unlocked": streak >= 4,
+            "progress": f"{streak} тиж.",
+        },
+        {
+            "key": "form_progress",
+            "icon": "📈",
+            "title": "Прогрес форми",
+            "description": "Форма (CTL) зросла за останні два тижні",
+            "unlocked": ctl_delta > 0,
+            "progress": f"{ctl_delta:+.1f}",
+        },
+        {
+            "key": "marathon_volume",
+            "icon": "🏅",
+            "title": "Марафонський обсяг місяця",
+            "description": "42.2 км і більше за календарний місяць",
+            "unlocked": month_km >= 42.2,
+            "progress": f"{month_km} км",
+        },
+    ]
 
 
 # --------------------------------------------------------------------------- #

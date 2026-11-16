@@ -21,20 +21,34 @@ from sqlalchemy.orm import Session, joinedload
 
 from .analytics import (
     DEFAULT_GOALS,
+    achievements,
     acwr,
     available_report_months,
     compute_challenges,
     compute_streak,
+    ef_trend,
+    efficiency_metrics,
     fitness_fatigue,
+    form_status,
     heatmap_tracks,
     heatmap_years,
     hr_zone_analysis,
     monthly_report,
+    pacing_analysis,
     personal_records,
+    recovery_estimate,
+    vdot_analysis,
 )
 from .db import BASE_DIR, get_db, init_db
 from .models import Activity, AppSettings, Shoe
-from .parser import SUPPORTED_EXTENSIONS, ParseError, parse_activity_file
+from .parser import (
+    SUPPORTED_EXTENSIONS,
+    ParseError,
+    gap_pace_from_point_dicts,
+    parse_activity_file,
+    samples_from_point_dicts,
+    splits_from_point_dicts,
+)
 from .routing import RouteError, RouteInputError, build_route
 from .weather import badge_from_json, fetch_weather
 
@@ -455,13 +469,30 @@ def activity_detail(
     if activity is None:
         raise HTTPException(status_code=404, detail="Тренування не знайдено")
 
+    points = activity.points
+    # перераховуємо спліти зі збережених точок, щоб мати набір/втрату висоти
+    # також для треків, завантажених до появи цієї метрики
+    recomputed = splits_from_point_dicts(points) if activity.has_gps else []
+    splits = recomputed or activity.splits
+    has_elevation = activity.has_gps and sum(1 for p in points if p.get("ele") is not None) > 1
+
+    # GAP, ефективність та розкладка рахуються зі збережених точок треку
+    samples = samples_from_point_dicts(points)
+    gap_sec = gap_pace_from_point_dicts(points)
+    efficiency = efficiency_metrics(samples)
+    pacing = pacing_analysis(samples)
+
     return templates.TemplateResponse(
         request=request,
         name="activity.html",
         context={
             "activity": activity,
-            "points": activity.points,
-            "splits": activity.splits,
+            "points": points,
+            "splits": splits,
+            "has_elevation": has_elevation,
+            "gap_sec": gap_sec,
+            "efficiency": efficiency,
+            "pacing": pacing,
             "message": message,
             "error": error,
             "nav_active": "",
@@ -804,9 +835,14 @@ def analytics_page(
     error: str | None = None,
 ) -> HTMLResponse:
     zones = hr_zone_analysis(db)
-    fitness = fitness_fatigue(db, days=42)
+    fitness = fitness_fatigue(db, days=90)
+    form = form_status(fitness)
     records = personal_records(db)
     recovery = acwr(db)
+    rest = recovery_estimate(db)
+    ef_series = ef_trend(db, days=30)
+    vdot = vdot_analysis(db)
+    badges = achievements(db)
     return templates.TemplateResponse(
         request=request,
         name="analytics.html",
@@ -816,8 +852,13 @@ def analytics_page(
             "nav_active": "analytics",
             "zones": zones,
             "fitness": fitness,
+            "form": form,
             "records": records,
             "recovery": recovery,
+            "rest": rest,
+            "ef_series": ef_series,
+            "vdot": vdot,
+            "badges": badges,
         },
     )
 

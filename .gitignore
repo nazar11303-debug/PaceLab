@@ -5,8 +5,12 @@ __pycache__/
 
 # Локальні дані застосунку (створюються при запуску)
 runtracker.db
+PaceLab.db
 uploads/*
 !uploads/.gitkeep
+
+# Артефакти інструментів
+.trae-html-share-packages/
 
 # Робочі папки проєкту (див. AGENTS.md)
 _backup/

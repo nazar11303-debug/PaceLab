@@ -6,9 +6,9 @@
   <div class="row-between">
     <div>
       <h1 style="font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">Аналітика</h1>
-      <p class="muted small">Strava-Premium-стиль: пульсові зони, форма й втома, рекорди, відновлення.</p>
+      <p class="muted small">Strava-Premium-стиль: пульсові зони, форма й втома, GAP-ефективність, прогноз і нагороди.</p>
     </div>
-    <span class="badge badge-accent">42 дні вікна</span>
+    <span class="badge badge-accent">90 днів вікна</span>
   </div>
 
   <!-- ── зони пульсу + відновлення ─────────────────────────────────── -->
@@ -67,47 +67,131 @@
     {% if fitness.series %}
     <div style="height: 320px;"><canvas id="fitnessChart"></canvas></div>
     <p class="muted small mt-sm">CTL — довгострокова форма (42 дні), ATL — короткострокова втома (7 днів), TSB = CTL − ATL (свіжість).</p>
+
+    <div class="form-status {{ form.tone }} mt-md">
+      <div class="row-between">
+        <span class="form-status-label">{{ form.label }}</span>
+        <span class="chip">TSB <b>{{ form.tsb }}</b></span>
+      </div>
+      <p class="muted small mt-sm">{{ form.advice }}</p>
+    </div>
+
+    {% if rest.hours is not none %}
+    <div class="row mt-md" style="gap: 8px;">
+      {% if rest.ready %}
+      <span class="chip">✅ Відновлення завершено</span>
+      {% else %}
+      <span class="chip">До відновлення: <b>{{ rest.remaining }} год</b></span>
+      {% endif %}
+      <span class="chip">Після «{{ rest.activity.title }}» · потрібно {{ rest.hours }} год</span>
+    </div>
+    {% endif %}
     {% else %}
     <div class="empty"><div class="empty-icon">📈</div><p class="small">Ще немає тренувань для розрахунку навантаження.</p></div>
     {% endif %}
+  </section>
+
+  <!-- ── ефективність (EF) + оцінка VDOT ──────────────────────────── -->
+  <div class="grid-2">
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Тренд ефективності (EF)</h2>
+        <span class="muted small">останні 30 днів</span>
+      </div>
+      {% if ef_series %}
+      <div class="chart-box-sm"><canvas id="efChart"></canvas></div>
+      <p class="muted small mt-sm">EF = швидкість за GAP (м/хв) ÷ середній пульс. Зростання EF за того ж пульсу — ознака прогресу аеробної форми.</p>
+      {% else %}
+      <div class="empty"><div class="empty-icon">💓</div><p class="small">Потрібні треки з пер-точковим пульсом останніх 30 днів.</p></div>
+      {% endif %}
+    </section>
+
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Оцінка форми (VDOT)</h2>
+        <span class="muted small">найкращі відрізки за {{ vdot.weeks }} тижнів</span>
+      </div>
+      {% if vdot.vdot %}
+      <div class="row" style="align-items: baseline; gap: 10px;">
+        <span class="recovery-value">{{ vdot.vdot }}</span>
+        <span class="muted small">VDOT · VO₂max ≈ {{ vdot.vo2max }}</span>
+      </div>
+      {% if vdot.source %}
+      <p class="muted small mt-sm">
+        Джерело: {{ "%g"|format(vdot.source.distance_km) }} км за {{ vdot.source.time_sec|duration }}
+        · <a class="link-accent" href="/activities/{{ vdot.source.activity_id }}">{{ vdot.source.title }}</a>
+      </p>
+      {% endif %}
+      <div class="table-wrap mt-md">
+        <table class="data">
+          <thead><tr><th>Дистанція</th><th class="num">Прогноз</th><th class="num">Темп</th></tr></thead>
+          <tbody>
+            {% for prediction in vdot.predictions %}
+            <tr>
+              <td>{{ "%g"|format(prediction.distance_km) }} км</td>
+              <td class="num">{{ prediction.time_sec|duration }}</td>
+              <td class="num">{{ prediction.pace_sec|pace_km }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="zone-paces mt-md">
+        {% for zone in vdot.zones %}
+        <div class="zone-pace">
+          <span class="zone-pace-name">{{ zone.name }}</span>
+          <span class="zone-pace-range">{{ zone.pace_fast|pace_km }}–{{ zone.pace_slow|pace_km }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="muted small mt-sm">Тренувальні зони темпу за моделлю Джека Деніелса.</p>
+      {% else %}
+      <div class="empty"><div class="empty-icon">🎯</div><p class="small">Недостатньо даних для оцінки VDOT — потрібні треки з GPS за останні {{ vdot.weeks }} тижнів.</p></div>
+      {% endif %}
+    </section>
+  </div>
+
+  <!-- ── досягнення та нагороди ─────────────────────────────────────── -->
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Досягнення та нагороди</h2>
+      <span class="muted small">{{ badges|selectattr('unlocked')|list|length }} / {{ badges|length }} розблоковано</span>
+    </div>
+    <div class="achievement-grid">
+      {% for badge in badges %}
+      <div class="achievement {{ 'unlocked' if badge.unlocked else 'locked' }}">
+        <span class="achievement-icon">{{ badge.icon }}</span>
+        <span class="achievement-title">{{ badge.title }}</span>
+        <span class="achievement-desc">{{ badge.description }}</span>
+        <span class="achievement-progress">{{ badge.progress }}{% if badge.unlocked %} · отримано{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
   </section>
 
   <!-- ── особисті рекорди ──────────────────────────────────────────── -->
   <section class="card card-pad">
     <div class="card-head">
       <h2 class="card-title">Особисті рекорди</h2>
-      <span class="muted small">найшвидші відрізки серед усіх треків</span>
+      <span class="muted small">найшвидші безперервні відрізки серед усіх треків</span>
     </div>
-    <div class="table-wrap">
-      <table class="data">
-        <thead>
-          <tr>
-            <th>Дистанція</th>
-            <th class="num">Найкращий час</th>
-            <th class="num">Темп</th>
-            <th>Тренування</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for record in records %}
-          <tr>
-            <td><b>{{ "%.1f"|format(record.distance_km) }} км</b></td>
-            {% if record.time_sec %}
-            <td class="num"><b>{{ record.time_sec|duration }}</b></td>
-            <td class="num">{{ record.pace_sec|pace_km }}</td>
-            <td>
-              <a href="/activities/{{ record.activity_id }}">{{ record.title }}</a>
-              <span class="muted small">· {{ record.date.strftime("%d.%m.%Y") }}</span>
-            </td>
-            {% else %}
-            <td class="num record-empty">—</td>
-            <td class="num record-empty">—</td>
-            <td class="record-empty">немає треку такої довжини</td>
-            {% endif %}
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div class="pr-grid">
+      {% for record in records %}
+      {% if record.time_sec %}
+      <a class="pr-card" href="/activities/{{ record.activity_id }}">
+        <span class="pr-distance">{{ "%g"|format(record.distance_km) }} км</span>
+        <span class="pr-time">{{ record.time_sec|duration }}</span>
+        <span class="pr-pace">{{ record.pace_sec|pace_km }}</span>
+        <span class="pr-date">{{ record.date.strftime("%d.%m.%Y") }}</span>
+      </a>
+      {% else %}
+      <div class="pr-card pr-empty">
+        <span class="pr-distance">{{ "%g"|format(record.distance_km) }} км</span>
+        <span class="pr-time">—</span>
+        <span class="pr-pace muted">немає треку такої довжини</span>
+      </div>
+      {% endif %}
+      {% endfor %}
     </div>
   </section>
 </div>
@@ -165,6 +249,43 @@
         scales: {
           x: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { maxTicksLimit: 10 } },
           y: { title: { display: true, text: "Навантаження" }, grid: { color: "rgba(255,255,255,0.05)" }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  const efSeries = {{ ef_series|tojson }};
+  const efEl = document.getElementById("efChart");
+  if (efEl && efSeries.length && window.Chart) {
+    Chart.defaults.color = "#8b949e";
+    Chart.defaults.borderColor = "rgba(255,255,255,0.07)";
+    new Chart(efEl, {
+      type: "line",
+      data: {
+        labels: efSeries.map(item => item.label),
+        datasets: [
+          {
+            label: "Efficiency Factor",
+            data: efSeries.map(item => item.ef),
+            borderColor: "#d29922",
+            backgroundColor: "rgba(210,153,34,0.14)",
+            borderWidth: 2.2,
+            pointRadius: 3,
+            pointBackgroundColor: "#d29922",
+            pointHoverRadius: 5,
+            tension: 0.3,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { maxTicksLimit: 7 } },
+          y: { title: { display: true, text: "EF" }, grid: { color: "rgba(255,255,255,0.05)" } }
         }
       }
     });
