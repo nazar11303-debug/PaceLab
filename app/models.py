@@ -62,6 +62,16 @@ class Activity(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     #: JSON-рядок з погодою на годину старту (Open-Meteo), None якщо не вдалось отримати
     weather_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Оригінальна (неочищена) дистанція треку — для порівняння після міграції
+    distance_km_raw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Очищена дистанція (паузи та GPS-«телепорти» відкинуто)
+    distance_km_clean: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Версія парсера, яким оброблено трек (None — завантажено до появи версій)
+    parser_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Суб'єктивна важкість тренування за шкалою Борга (1–10), вводить користувач
+    srpe: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Позначка «змагання» — такі зусилля мають вищу вагу для оцінки VDOT
+    is_race: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     shoe: Mapped[Shoe | None] = relationship(back_populates="activities")
 
@@ -99,6 +109,11 @@ class Activity(Base):
             "shoe_name": self.shoe.name if self.shoe else None,
             "file_hash": self.file_hash,
             "weather_json": self.weather_json,
+            "distance_km_raw": self.distance_km_raw,
+            "distance_km_clean": self.distance_km_clean,
+            "parser_version": self.parser_version,
+            "srpe": self.srpe,
+            "is_race": self.is_race,
         }
 
 

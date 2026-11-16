@@ -48,6 +48,7 @@ from .analytics import (
 from .db import BASE_DIR, get_db, init_db
 from .models import Activity, AppSettings, Shoe
 from .parser import (
+    PARSER_VERSION,
     SUPPORTED_EXTENSIONS,
     ParseError,
     gap_pace_from_point_dicts,
@@ -424,6 +425,9 @@ async def upload_activity(
         title=payload["title"][:200],
         date=payload["date"],
         distance_km=payload["distance_km"],
+        distance_km_raw=payload.get("distance_km_raw"),
+        distance_km_clean=payload.get("distance_km_clean"),
+        parser_version=PARSER_VERSION,
         duration_sec=payload["duration_sec"],
         avg_pace_sec=payload["avg_pace_sec"],
         avg_hr=payload["avg_hr"] if payload["avg_hr"] else manual_hr,
@@ -437,6 +441,7 @@ async def upload_activity(
                 "points": payload["points"],
                 "splits": payload["splits"],
                 "source_file": stored_name,
+                "parser_version": PARSER_VERSION,
             },
             ensure_ascii=False,
         ),
@@ -540,6 +545,8 @@ def activity_update(
     date: str = Form(...),
     shoe_id: str = Form(""),
     avg_hr: str = Form(""),
+    srpe: str = Form(""),
+    is_race: str = Form(""),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     activity = db.execute(
@@ -577,6 +584,11 @@ def activity_update(
     # ручний пульс застосовується лише коли у вихідному треку немає пер-точкових даних
     if not _has_point_hr(activity):
         activity.avg_hr = _parse_hr(avg_hr)
+
+    # суб'єктивна важкість (sRPE, 1–10) коригує навантаження; порожнє значення — скидання
+    srpe = (srpe or "").strip()
+    activity.srpe = int(srpe) if srpe.isdigit() and 1 <= int(srpe) <= 10 else None
+    activity.is_race = (is_race or "").strip().lower() in {"1", "true", "on", "yes"}
     db.commit()
 
     return _message(f"Тренування «{activity.title}» оновлено")

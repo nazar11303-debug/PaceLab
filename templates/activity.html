@@ -10,7 +10,10 @@
 
   <header class="row-between">
     <div style="min-width: 0;">
-      <h1 style="font-size: 26px; font-weight: 800; letter-spacing: -0.6px;">{{ activity.title }}</h1>
+      <h1 style="font-size: 26px; font-weight: 800; letter-spacing: -0.6px;">
+        {{ activity.title }}
+        {% if activity.is_race %}<span class="badge badge-accent">🏁 Змагання</span>{% endif %}
+      </h1>
       <p class="muted small" style="margin-top: 4px;">
         {{ activity.date|date }}
         {% if activity.shoe %} · <span style="color: var(--text);">{{ activity.shoe.name }}</span>{% endif %}
@@ -55,6 +58,9 @@
       ("Макс. пульс", (activity.max_hr ~ "") if activity.max_hr else "—"),
       ("Набір висоти", (activity.elevation_gain|round(0)|int ~ " м")),
     ] %}
+    {% if activity.srpe %}
+    {% set metrics = metrics + [("sRPE", activity.srpe ~ " / 10")] %}
+    {% endif %}
     {% for label, value in metrics %}
     <div class="card metric">
       <p class="metric-label">{{ label }}</p>

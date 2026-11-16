@@ -44,6 +44,25 @@
         <p class="muted small" style="margin-top: 4px;">Враховується у пульсових зонах Z1–Z5 та навантаженні, якщо у файлі немає даних пульсу.</p>
       </div>
 
+      <div>
+        <label class="label" for="srpe">Суб'єктивна важкість (sRPE, 1–10)</label>
+        <select class="select" id="srpe" name="srpe">
+          <option value="">Не вказано</option>
+          {% for value in range(1, 11) %}
+          <option value="{{ value }}" {{ "selected" if activity.srpe == value }}>{{ value }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted small" style="margin-top: 4px;">1 — дуже легко, 10 — максимально важко. Коригує розрахунок навантаження (rTSS/CTL/ATL), якщо даних пульсу немає.</p>
+      </div>
+
+      <div>
+        <label class="label" for="is_race" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+          <input type="checkbox" id="is_race" name="is_race" value="1" {{ "checked" if activity.is_race }}>
+          Змагання (Race)
+        </label>
+        <p class="muted small" style="margin-top: 4px;">Змагальні зусилля мають підвищений коефіцієнт ваги для оцінки VDOT.</p>
+      </div>
+
       <div class="row-between">
         <a class="btn" href="/activities/{{ activity.id }}">Скасувати</a>
         <button class="btn btn-primary" type="submit">Зберегти</button>

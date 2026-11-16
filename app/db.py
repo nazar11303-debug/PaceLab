@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,6 +18,20 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     future=True,
 )
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+    """Тримати журнал SQLite в пам'яті (``journal_mode=MEMORY``).
+
+    Типового режиму ``delete`` недостатньо: SQLite створює поряд з БД файл
+    ``PaceLab.db-journal``, і якщо його створення з якоїсь причини не вдається,
+    транзакція завершується «успішно», але запис фактично не потрапляє на диск.
+    Журнал у пам'яті прибирає цю залежність і залишає транзакції атомарними.
+    """
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=MEMORY")
+    cursor.close()
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
@@ -40,6 +54,11 @@ _LATE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "activities": [
         ("file_hash", "VARCHAR(64)"),
         ("weather_json", "TEXT"),
+        ("distance_km_raw", "FLOAT"),
+        ("distance_km_clean", "FLOAT"),
+        ("parser_version", "INTEGER"),
+        ("srpe", "INTEGER"),
+        ("is_race", "BOOLEAN DEFAULT 0"),
     ],
     "shoes": [],
     "app_settings": [],

@@ -66,14 +66,14 @@
       </div>
       <div class="row" style="align-items: baseline; gap: 10px;">
         <span class="recovery-value">{{ recovery.ratio if recovery.ratio is not none else "—" }}</span>
-        <span class="muted small">ACWR · 7 днів / 28 днів</span>
+        <span class="muted small">Індикатор співвідношення навантажень (оцінка) · 7 днів / 28 днів</span>
       </div>
       <p class="mt-sm" style="font-size: 14px;">{{ recovery.advice }}</p>
       <div class="row mt-md" style="gap: 8px;">
         <span class="chip">Гостре (7 д): <b>{{ recovery.acute }}</b></span>
         <span class="chip">Хронічне (тижневе): <b>{{ recovery.chronic_weekly }}</b></span>
       </div>
-      <p class="muted small mt-sm">Формула: навантаження = хвилини × (середній пульс / 140). ACWR 0.8–1.3 — безпечна зона.</p>
+      <p class="muted small mt-sm">Оцінка співвідношення навантажень: гостре (7 днів) до хронічного середнього. Навантаження = хвилини × (пульс / 140) або rTSS за GAP, коли пульсу немає. Безпечна зона — 0.8–1.3.</p>
     </section>
   </div>
 
@@ -91,6 +91,13 @@
     <div style="height: 320px;"><canvas id="fitnessChart"></canvas></div>
     <p class="muted small mt-sm">CTL — довгострокова форма (42 дні), ATL — короткострокова втома (7 днів), TSB = CTL − ATL (свіжість).</p>
 
+    {% if fitness.ramp_up %}
+    <div class="card card-pad mt-sm" style="border-color: rgba(210,153,34,0.5); background: rgba(210,153,34,0.08);">
+      <span class="badge badge-accent">⚠️ Період розгону бази</span>
+      <p class="muted small mt-sm">{{ fitness.warning }}</p>
+    </div>
+    {% endif %}
+
     <div class="form-status {{ form.tone }} mt-md">
       <div class="row-between">
         <span class="form-status-label">{{ form.label }}</span>
@@ -102,9 +109,9 @@
     {% if rest.hours is not none %}
     <div class="row mt-md" style="gap: 8px;">
       {% if rest.ready %}
-      <span class="chip">✅ Відновлення завершено</span>
+      <span class="chip">✅ Орієнтовний час відновлення: завершено</span>
       {% else %}
-      <span class="chip">До відновлення: <b>{{ rest.remaining }} год</b></span>
+      <span class="chip">Орієнтовний час відновлення: <b>{{ rest.remaining }} год</b></span>
       {% endif %}
       <span class="chip">Після «{{ rest.activity.title }}» · потрібно {{ rest.hours }} год</span>
     </div>
@@ -150,9 +157,11 @@
       </div>
       {% if vdot.source %}
       <p class="muted small mt-sm">
-        Джерело: {{ "%g"|format(vdot.source.distance_km) }} км за {{ vdot.source.time_sec|duration }}
+        Джерело: безперервний відрізок {{ "%g"|format(vdot.source.distance_km) }} км за {{ vdot.source.time_sec|duration }}
         · <a class="link-accent" href="/activities/{{ vdot.source.activity_id }}">{{ vdot.source.title }}</a>
+        {% if vdot.source.is_race %}<span class="badge badge-accent">🏁 Змагання</span>{% endif %}
       </p>
+      <p class="muted small">Оцінка за найшвидшим безперервним відрізком ≥10 хв; змагання отримують підвищений коефіцієнт ваги.</p>
       {% endif %}
       <div class="table-wrap mt-md">
         <table class="data">
@@ -168,6 +177,28 @@
           </tbody>
         </table>
       </div>
+
+      {% if vdot.marathon %}
+      {% set conf_badge = 'badge-green' if vdot.marathon.tone == 'high' else ('badge-accent' if vdot.marathon.tone == 'medium' else 'badge-red') %}
+      <div class="mt-md" style="border: 1px solid rgba(210,153,34,0.35); border-radius: 10px; padding: 12px;">
+        <div class="row-between">
+          <span class="small" style="font-weight: 700;">Прогноз марафону (42.2 км)</span>
+          <span class="badge {{ conf_badge }}">Впевненість: {{ vdot.marathon.confidence }}</span>
+        </div>
+        <div class="row mt-sm" style="align-items: baseline; gap: 10px;">
+          <span class="recovery-value">{{ vdot.marathon.time_sec|duration }}</span>
+          <span class="muted small">{{ vdot.marathon.pace_sec|pace_km }}</span>
+        </div>
+        <div class="row mt-sm" style="gap: 8px; flex-wrap: wrap;">
+          <span class="chip">Базовий (VDOT): <b>{{ vdot.marathon.base_time_sec|duration }}</b></span>
+          <span class="chip">Середній тижневий обсяг (6 тиж.): <b>{{ vdot.marathon.weekly_km }} км</b></span>
+          {% if vdot.marathon.volume_factor > 1 %}
+          <span class="chip">Поправка на обсяг: <b>+{{ ((vdot.marathon.volume_factor - 1) * 100)|round(1) }}%</b></span>
+          {% endif %}
+        </div>
+        <p class="muted small mt-sm">{{ vdot.marathon.note }}</p>
+      </div>
+      {% endif %}
       <div class="zone-paces mt-md">
         {% for zone in vdot.zones %}
         <div class="zone-pace">
@@ -230,7 +261,7 @@
     <section class="card card-pad">
       <div class="card-head">
         <h2 class="card-title">Схожі маршрути</h2>
-        <span class="muted small">{{ routes|length }} груп · ±5 % дистанції</span>
+        <span class="muted small">{{ routes|length }} груп · geohash-збіг ≥75 % · ±5 % дистанції</span>
       </div>
       {% if routes %}
       <div class="stack" style="gap: 12px;">
@@ -264,7 +295,7 @@
         {% endfor %}
       </div>
       {% else %}
-      <div class="empty"><div class="empty-icon">🔁</div><p class="small">Потрібно щонайменше два тренування зі схожим стартом, фінішем і дистанцією (±5 %).</p></div>
+      <div class="empty"><div class="empty-icon">🔁</div><p class="small">Потрібно щонайменше два тренування зі схожою трасою (збіг geohash-клітинок ≥75 %) і дистанцією (±5 %).</p></div>
       {% endif %}
     </section>
 

@@ -257,7 +257,7 @@ check("звіт за обраний місяць рендериться", status
 # --------------------------------------------------------------------------- #
 status, analytics_html, _ = get("/analytics")
 check("аналітика: сторінка 200", status == 200, f"HTTP {status}")
-for marker in ["Пульсові зони", "Форма і втома", "Особисті рекорди", "Відновлення та рекомендація", "ACWR", "Z1", "Z5"]:
+for marker in ["Пульсові зони", "Форма і втома", "Особисті рекорди", "Відновлення та рекомендація", "Індикатор співвідношення навантажень (оцінка)", "Z1", "Z5"]:
     check(f"аналітика: блок «{marker}»", marker in analytics_html)
 check("аналітика: рекорд 1 км пораховано", "1.0 км" in analytics_html and "record-empty" not in analytics_html.split("1.0 км")[1][:200])
 check("аналітика: CTL/ATL/TSB у HTML", "CTL:" in analytics_html and "ATL:" in analytics_html and "TSB:" in analytics_html)

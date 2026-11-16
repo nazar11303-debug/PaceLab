@@ -53,6 +53,11 @@ DEFAULT_GOALS = {
 DEFAULT_MAX_HR = 190
 FITNESS_DAYS = 42
 
+#: Порогова швидкість за замовчуванням (сек/км) — 4:30/км, поки VDOT не оцінено
+DEFAULT_THRESHOLD_PACE_SEC = 270.0
+#: Частка VDOT, що відповідає пороговому (T) темпу за моделлю Деніелса
+THRESHOLD_VDOT_SHARE = 0.88
+
 
 # --------------------------------------------------------------------------- #
 #  helpers
@@ -304,15 +309,54 @@ def hr_zone_analysis(db: Session) -> dict:
 # --------------------------------------------------------------------------- #
 #  training load, fitness & fatigue, ACWR
 # --------------------------------------------------------------------------- #
+def _threshold_pace_sec(db: Session) -> float:
+    """Порогова швидкість (сек/км) з поточного VDOT, інакше дефолт 4:30/км."""
+    vdot = vdot_analysis(db).get("vdot")
+    if not vdot:
+        return DEFAULT_THRESHOLD_PACE_SEC
+    velocity = _velocity_for_vo2(vdot * THRESHOLD_VDOT_SHARE)
+    if velocity <= 0:
+        return DEFAULT_THRESHOLD_PACE_SEC
+    return 60000.0 / velocity
+
+
+def activity_load(activity: Activity, threshold_pace_sec: float) -> float:
+    """Навантаження однієї сесії.
+
+    * з пульсом — TRIMP-подібне: хвилини × (середній пульс / 140);
+    * без пульсу — rTSS: години × IF² × 100, де ``IF = порогова / фактична (GAP) швидкість``;
+    * якщо вказано sRPE (1–10) — об'єктивна оцінка усереднюється з суб'єктивною
+      (``sRPE × години × 10``), тож важкість «на відчуття» коригує навантаження.
+    """
+    hours = (activity.duration_sec or 0) / 3600.0
+    if hours <= 0:
+        return 0.0
+
+    base: float | None = None
+    if activity.avg_hr:
+        base = hours * 60.0 * max(0.5, activity.avg_hr / 140.0)
+    else:
+        gap_pace = gap_pace_from_point_dicts(activity.points) or activity.avg_pace_sec
+        if gap_pace and gap_pace > 0 and threshold_pace_sec > 0:
+            intensity_factor = threshold_pace_sec / gap_pace
+            base = hours * intensity_factor**2 * 100.0
+
+    if activity.srpe:
+        srpe_load = max(1, min(10, int(activity.srpe))) * hours * 10.0
+        base = srpe_load if base is None else (base + srpe_load) / 2.0
+
+    return base or 0.0
+
+
 def _daily_loads(db: Session) -> dict[date, float]:
-    """Simple TRIMP-like load: minutes × (avg HR / 140), min 60 bpm safety."""
+    """Добове навантаження: TRIMP за пульсом або rTSS без пульсу (див. ``activity_load``)."""
+    threshold_pace = _threshold_pace_sec(db)
     loads: dict[date, float] = {}
     for activity in _all_activities(db):
-        minutes = (activity.duration_sec or 0) / 60
-        if minutes <= 0:
+        load = activity_load(activity, threshold_pace)
+        if load <= 0:
             continue
-        intensity = max(0.5, (activity.avg_hr or 140) / 140.0)
-        loads[_day(activity.date)] = loads.get(_day(activity.date), 0.0) + minutes * intensity
+        loads[_day(activity.date)] = loads.get(_day(activity.date), 0.0) + load
     return loads
 
 
@@ -331,7 +375,16 @@ def fitness_fatigue(db: Session, days: int = FITNESS_DAYS, today: date | None = 
     today = today or date.today()
     loads = _daily_loads(db)
     if not loads:
-        return {"series": [], "ctl": 0.0, "atl": 0.0, "tsb": 0.0, "days": days}
+        return {
+            "series": [],
+            "ctl": 0.0,
+            "atl": 0.0,
+            "tsb": 0.0,
+            "days": days,
+            "history_days": 0,
+            "ramp_up": True,
+            "warning": "Історія тренувань порожня — оцінка довгострокової форми недоступна.",
+        }
 
     first_day = min(loads)
     ctl = 0.0
@@ -356,7 +409,26 @@ def fitness_fatigue(db: Session, days: int = FITNESS_DAYS, today: date | None = 
             )
         day += timedelta(days=1)
 
-    return {"series": series, "ctl": round(ctl, 1), "atl": round(atl, 1), "tsb": round(ctl - atl, 1), "days": days}
+    history_days = (today - first_day).days + 1
+    # CTL розганяється приблизно за 42 дні: поки історії менше, крива занижена
+    ramp_up = history_days < FITNESS_DAYS
+    warning = (
+        f"Період розгону бази: історія тренувань {history_days} дн. < {FITNESS_DAYS} дн. "
+        "CTL/ATL ще не відображають реальну довгострокову форму — оцінка занижена."
+        if ramp_up
+        else None
+    )
+
+    return {
+        "series": series,
+        "ctl": round(ctl, 1),
+        "atl": round(atl, 1),
+        "tsb": round(ctl - atl, 1),
+        "days": days,
+        "history_days": history_days,
+        "ramp_up": ramp_up,
+        "warning": warning,
+    }
 
 
 def acwr(db: Session, today: date | None = None) -> dict:
@@ -666,8 +738,14 @@ def pacing_analysis(
 # --------------------------------------------------------------------------- #
 #  VDOT / VO2max та прогноз на дистанції (Джек Деніелс)
 # --------------------------------------------------------------------------- #
-#: Дистанції, за якими шукаємо найкращий відрізок для оцінки VDOT
-VDOT_SOURCE_DISTANCES_KM = [1.609, 3.0, 5.0, 10.0, 21.1]
+#: Мінімальна тривалість безперервного відрізка для оцінки VDOT (сек) — 10 хвилин
+VDOT_MIN_SEGMENT_SEC = 600.0
+#: Вага зусилля: змагання — максимальні зусилля, тож отримують підвищений коефіцієнт
+RACE_VDOT_WEIGHT = 1.04
+#: Цільовий тижневий обсяг (км): за нього марафонський прогноз не коригується
+MARATHON_REFERENCE_WEEKLY_KM = 50.0
+#: Максимальна поправка (частка уповільнення) при повній відсутності обсягу
+MARATHON_VOLUME_PENALTY = 0.15
 #: Класичні змагальні дистанції для прогнозу
 RACE_DISTANCES_KM = [5.0, 10.0, 21.1, 42.2]
 #: Тренувальні зони (частка від VDOT/VO2max за Деніелсом)
@@ -734,40 +812,143 @@ def _pace_band(vdot: float, low_pct: float, high_pct: float) -> dict:
     }
 
 
+def _best_segment(
+    samples: list[tuple[float, float]], min_seconds: float = VDOT_MIN_SEGMENT_SEC
+) -> tuple[float, float] | None:
+    """Найшвидший безперервний відрізок тривалістю ``min_seconds``.
+
+    Повертає ``(метри, секунди)`` або ``None``, якщо трек коротший за відрізок.
+    Дистанція інтерполюється на межах вікна, тож оцінка не залежить від щільності
+    GPS-точок.
+    """
+    if len(samples) < 2 or samples[-1][0] < min_seconds:
+        return None
+    best_distance = 0.0
+    count = len(samples)
+    right = 0
+    for left in range(count):
+        if right < left:
+            right = left
+        target = samples[left][0] + min_seconds
+        while right < count and samples[right][0] < target:
+            right += 1
+        if right >= count:
+            break
+        previous = samples[right - 1] if right - 1 >= left else samples[left]
+        span = samples[right][0] - previous[0]
+        if span <= 0:
+            continue
+        ratio = (target - previous[0]) / span
+        end_distance = previous[1] + ratio * (samples[right][1] - previous[1])
+        distance = end_distance - samples[left][1]
+        if distance > best_distance:
+            best_distance = distance
+    if best_distance <= 0:
+        return None
+    return best_distance, min_seconds
+
+
+def _weekly_volume_km(db: Session, weeks: int = 6, today: date | None = None) -> float:
+    """Середній тижневий обсяг (км) за останні ``weeks`` тижнів."""
+    today = today or date.today()
+    start = today - timedelta(days=weeks * 7)
+    total = sum(a.distance_km for a in _all_activities(db) if _day(a.date) >= start)
+    return round(total / weeks, 1)
+
+
+def _marathon_forecast(db: Session, vdot: float, source: dict | None, today: date) -> dict:
+    """Прогноз на 42.2 км з поправкою на тижневий обсяг і рівнем впевненості.
+
+    Результат на марафоні сильно залежить від обсягу: якщо середній тижневий
+    пробіг за 6 тижнів менший за опорний, прогноз VDOT уповільнюється.
+    """
+    base_seconds = _time_for_distance(vdot, 42_200.0)
+    weekly_km = _weekly_volume_km(db, 6, today)
+    if weekly_km < MARATHON_REFERENCE_WEEKLY_KM:
+        shortfall = (MARATHON_REFERENCE_WEEKLY_KM - weekly_km) / MARATHON_REFERENCE_WEEKLY_KM
+        factor = 1.0 + shortfall * MARATHON_VOLUME_PENALTY
+    else:
+        factor = 1.0
+    seconds = base_seconds * factor
+
+    activities = _all_activities(db)
+    history_days = (today - _day(activities[0].date)).days + 1 if activities else 0
+    is_race = bool(source and source.get("is_race"))
+    if history_days < FITNESS_DAYS or weekly_km < 25:
+        confidence, tone = "Низький", "low"
+        note = "Мало історії або обсягу — прогноз орієнтовний. Нарощуй тижневий кілометраж і додай довгі пробіжки."
+    elif is_race and weekly_km >= MARATHON_REFERENCE_WEEKLY_KM and history_days >= 2 * FITNESS_DAYS:
+        confidence, tone = "Високий", "high"
+        note = "Є змагальний результат і достатній обсяг — прогноз найнадійніший."
+    else:
+        confidence, tone = "Середній", "medium"
+        note = "Обсяг або тривалість історії помірні — прогноз із поправкою на тижневий кілометраж."
+
+    return {
+        "distance_km": 42.2,
+        "time_sec": int(round(seconds)),
+        "pace_sec": round(seconds / 42.2, 1),
+        "base_time_sec": int(round(base_seconds)),
+        "weekly_km": weekly_km,
+        "volume_factor": round(factor, 3),
+        "confidence": confidence,
+        "tone": tone,
+        "note": note,
+    }
+
+
 def vdot_analysis(db: Session, weeks: int = 6, today: date | None = None) -> dict:
-    """Поточний VDOT за найкращими відрізками останніх ``weeks`` тижнів."""
+    """Поточний VDOT за найшвидшими безперервними відрізками (≥10 хв) останніх тижнів."""
     today = today or date.today()
     start = today - timedelta(days=weeks * 7)
     activities = [a for a in _all_activities(db) if _day(a.date) >= start]
 
-    best_vdot = 0.0
+    best_score = 0.0
     source: dict | None = None
     for activity in activities:
         samples = _point_samples(activity)
         if not samples:
             continue
-        for distance_km in VDOT_SOURCE_DISTANCES_KM:
-            seconds = _best_time_for_distance(samples, distance_km * 1000)
-            if seconds is None:
-                continue
-            vdot = _vdot_from_performance(distance_km * 1000, seconds)
-            if vdot > best_vdot:
-                best_vdot = vdot
-                source = {
-                    "distance_km": distance_km,
-                    "time_sec": int(round(seconds)),
-                    "pace_sec": round(seconds / distance_km, 1),
-                    "activity_id": activity.id,
-                    "title": activity.title,
-                    "date": activity.date,
-                }
+        segment = _best_segment(samples)
+        if segment is None:
+            continue
+        distance_m, seconds = segment
+        raw_vdot = _vdot_from_performance(distance_m, seconds)
+        if raw_vdot <= 0:
+            continue
+        # змагання — максимальне зусилля, тож має підвищений коефіцієнт ваги
+        weight = RACE_VDOT_WEIGHT if activity.is_race else 1.0
+        score = raw_vdot * weight
+        if score > best_score:
+            best_score = score
+            source = {
+                "distance_km": round(distance_m / 1000, 3),
+                "time_sec": int(round(seconds)),
+                "pace_sec": round(seconds / (distance_m / 1000), 1),
+                "activity_id": activity.id,
+                "title": activity.title,
+                "date": activity.date,
+                "is_race": bool(activity.is_race),
+                "raw_vdot": round(raw_vdot, 1),
+            }
 
-    if best_vdot <= 0:
-        return {"vdot": None, "predictions": [], "zones": [], "source": None, "weeks": weeks}
+    if best_score <= 0:
+        return {
+            "vdot": None,
+            "predictions": [],
+            "zones": [],
+            "source": None,
+            "marathon": None,
+            "weeks": weeks,
+        }
 
+    marathon = _marathon_forecast(db, best_score, source, today)
     predictions = []
     for distance_km in RACE_DISTANCES_KM:
-        seconds = _time_for_distance(best_vdot, distance_km * 1000)
+        if distance_km == 42.2:
+            seconds = float(marathon["time_sec"])
+        else:
+            seconds = _time_for_distance(best_score, distance_km * 1000)
         predictions.append(
             {
                 "distance_km": distance_km,
@@ -776,15 +957,16 @@ def vdot_analysis(db: Session, weeks: int = 6, today: date | None = None) -> dic
             }
         )
     zones = [
-        {"code": code, "name": name, **_pace_band(best_vdot, low, high)}
+        {"code": code, "name": name, **_pace_band(best_score, low, high)}
         for code, name, low, high in TRAINING_ZONES
     ]
     return {
-        "vdot": round(best_vdot, 1),
-        "vo2max": round(best_vdot, 1),
+        "vdot": round(best_score, 1),
+        "vo2max": round(best_score, 1),
         "predictions": predictions,
         "zones": zones,
         "source": source,
+        "marathon": marathon,
         "weeks": weeks,
     }
 
@@ -1020,32 +1202,101 @@ def training_heatmap(db: Session, months: int = 12, today: date | None = None) -
 #: Допуск схожості маршруту: старт/фініш (м) і дистанція (частка)
 MATCH_START_FINISH_M = 150.0
 MATCH_DISTANCE_TOLERANCE = 0.05
+#: Скільки точок лишається після ресемплінгу треку (порівняння форми маршруту)
+ROUTE_SAMPLE_POINTS = 30
+#: Точність geohash-клітинки для порівняння маршрутів (≈150 м)
+ROUTE_GEOHASH_PRECISION = 7
+#: Мінімальний коефіцієнт Жаккара, за якого маршрути вважаються однаковими
+ROUTE_JACCARD_THRESHOLD = 0.75
+
+_GEOHASH_ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"
+
+
+def _geohash(lat: float, lon: float, precision: int = ROUTE_GEOHASH_PRECISION) -> str:
+    """Geohash-клітинка для координати (власна реалізація, без залежностей)."""
+    lat_lo, lat_hi = -90.0, 90.0
+    lon_lo, lon_hi = -180.0, 180.0
+    chars: list[str] = []
+    bit = 0
+    value = 0
+    even = True
+    while len(chars) < precision:
+        if even:
+            mid = (lon_lo + lon_hi) / 2
+            if lon >= mid:
+                value = (value << 1) | 1
+                lon_lo = mid
+            else:
+                value <<= 1
+                lon_hi = mid
+        else:
+            mid = (lat_lo + lat_hi) / 2
+            if lat >= mid:
+                value = (value << 1) | 1
+                lat_lo = mid
+            else:
+                value <<= 1
+                lat_hi = mid
+        even = not even
+        bit += 1
+        if bit == 5:
+            chars.append(_GEOHASH_ALPHABET[value])
+            bit = 0
+            value = 0
+    return "".join(chars)
+
+
+def _resample_route(points: list[dict], count: int = ROUTE_SAMPLE_POINTS) -> list[tuple[float, float]]:
+    """Рівномірно відібрати ``count`` GPS-точок треку (незалежно від довжини)."""
+    coords = [(p["lat"], p["lon"]) for p in points]
+    if len(coords) <= count:
+        return coords
+    last = len(coords) - 1
+    step = last / (count - 1)
+    indices = sorted({int(round(i * step)) for i in range(count)})
+    return [coords[i] for i in indices]
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    union = left | right
+    return len(left & right) / len(union) if union else 0.0
 
 
 def _route_signature(activity: Activity) -> dict | None:
     points = [p for p in activity.points if p.get("lat") is not None and p.get("lon") is not None]
     if len(points) < 2:
         return None
+    resampled = _resample_route(points)
     return {
         "activity": activity,
-        "start": (points[0]["lat"], points[0]["lon"]),
-        "finish": (points[-1]["lat"], points[-1]["lon"]),
+        "start": resampled[0],
+        "finish": resampled[-1],
+        "cells": {_geohash(lat, lon) for lat, lon in resampled},
         "distance_km": activity.distance_km,
     }
 
 
 def _same_route(left: dict, right: dict) -> bool:
+    """Чи це той самий маршрут: та сама дистанція і збіг форми траси.
+
+    Основний критерій — коефіцієнт Жаккара наборів geohash-клітинок (≥0.75).
+    Як запасний варіант лишається збіг старту й фінішу в межах допуску.
+    """
     if left["distance_km"] <= 0 or right["distance_km"] <= 0:
         return False
     if abs(left["distance_km"] - right["distance_km"]) / left["distance_km"] > MATCH_DISTANCE_TOLERANCE:
         return False
+    if _jaccard(left["cells"], right["cells"]) >= ROUTE_JACCARD_THRESHOLD:
+        return True
     start_gap = _haversine_m(*left["start"], *right["start"])
     finish_gap = _haversine_m(*left["finish"], *right["finish"])
     return start_gap <= MATCH_START_FINISH_M and finish_gap <= MATCH_START_FINISH_M
 
 
 def matched_runs(db: Session, minimum: int = 2) -> list[dict]:
-    """Групує тренування зі схожим стартом, фінішем і дистанцією (±5 %)."""
+    """Групує тренування зі схожою трасою (geohash-Жаккар) і дистанцією (±5 %)."""
     signatures = [signature for signature in (_route_signature(a) for a in _all_activities(db)) if signature]
     used = [False] * len(signatures)
     groups: list[dict] = []
