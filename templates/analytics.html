@@ -11,9 +11,10 @@
     <span class="badge badge-accent">90 днів вікна</span>
   </div>
 
-  <!-- ── зони пульсу + відновлення ─────────────────────────────────── -->
+  <!-- ── зони (пульс або темп за VDOT) + відновлення ───────────────── -->
   <div class="grid-2">
     <section class="card card-pad">
+      {% if has_point_hr %}
       <div class="card-head">
         <h2 class="card-title">Пульсові зони</h2>
         <span class="muted small">max HR {{ zones.max_hr }} · {{ zones.total_seconds|duration }} у зонах</span>
@@ -33,6 +34,28 @@
         {% endfor %}
       {% else %}
       <div class="empty"><div class="empty-icon">❤️</div><p class="small">Немає даних пульсу — завантаж тренування з пульсометром.</p></div>
+      {% endif %}
+      {% else %}
+      <div class="card-head">
+        <h2 class="card-title">Темпові зони (за VDOT)</h2>
+        <span class="muted small">{% if tempo.has_data %}{{ tempo.total_seconds|duration }} у зонах{% else %}Z1–Z5{% endif %}</span>
+      </div>
+      {% if tempo.has_data %}
+        {% for zone in tempo.zones %}
+        <div class="zone-row">
+          <div>
+            <div class="zone-code">{{ zone.code }}</div>
+            <div class="zone-name">{{ zone.name }}</div>
+          </div>
+          <div class="zone-bar" title="{{ zone.code }} · {{ zone.range }}">
+            <div class="zone-fill z{{ loop.index }}" style="width: {{ zone.percent }}%"></div>
+          </div>
+          <div class="zone-percent">{{ zone.percent }}%<br><span class="small">{{ zone.seconds|duration }}</span></div>
+        </div>
+        {% endfor %}
+      {% else %}
+      <div class="empty"><div class="empty-icon">🎚️</div><p class="small">Потрібна оцінка VDOT, щоб розподілити час по темпових зонах Z1–Z5.</p></div>
+      {% endif %}
       {% endif %}
     </section>
 
@@ -94,15 +117,24 @@
   <!-- ── ефективність (EF) + оцінка VDOT ──────────────────────────── -->
   <div class="grid-2">
     <section class="card card-pad">
+      {% if has_point_hr and ef_series %}
       <div class="card-head">
         <h2 class="card-title">Тренд ефективності (EF)</h2>
         <span class="muted small">останні 30 днів</span>
       </div>
-      {% if ef_series %}
       <div class="chart-box-sm"><canvas id="efChart"></canvas></div>
       <p class="muted small mt-sm">EF = швидкість за GAP (м/хв) ÷ середній пульс. Зростання EF за того ж пульсу — ознака прогресу аеробної форми.</p>
       {% else %}
-      <div class="empty"><div class="empty-icon">💓</div><p class="small">Потрібні треки з пер-точковим пульсом останніх 30 днів.</p></div>
+      <div class="card-head">
+        <h2 class="card-title">Тренд еквівалентного темпу (GAP)</h2>
+        <span class="muted small">останні 30 днів</span>
+      </div>
+      {% if gap_series %}
+      <div class="chart-box-sm"><canvas id="gapChart"></canvas></div>
+      <p class="muted small mt-sm">GAP — темп, скоригований на рельєф (формула Мінетті). Лінія вище — швидше: зниження GAP за однакових умов означає прогрес.</p>
+      {% else %}
+      <div class="empty"><div class="empty-icon">⛰️</div><p class="small">Потрібні треки з GPS за останні 30 днів, щоб побудувати тренд GAP.</p></div>
+      {% endif %}
       {% endif %}
     </section>
 
@@ -140,13 +172,132 @@
         {% for zone in vdot.zones %}
         <div class="zone-pace">
           <span class="zone-pace-name">{{ zone.name }}</span>
-          <span class="zone-pace-range">{{ zone.pace_fast|pace_km }}–{{ zone.pace_slow|pace_km }}</span>
+          <span class="zone-pace-range">{{ zone.pace_fast|pace }}–{{ zone.pace_slow|pace }} /км</span>
         </div>
         {% endfor %}
       </div>
       <p class="muted small mt-sm">Тренувальні зони темпу за моделлю Джека Деніелса.</p>
       {% else %}
       <div class="empty"><div class="empty-icon">🎯</div><p class="small">Недостатньо даних для оцінки VDOT — потрібні треки з GPS за останні {{ vdot.weeks }} тижнів.</p></div>
+      {% endif %}
+    </section>
+  </div>
+
+  <!-- ── теплова карта тренувань (12 місяців) ──────────────────────── -->
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Теплова карта тренувань</h2>
+      <span class="muted small">{{ heatmap.total_km }} км · {{ heatmap.active_days }} активних днів за 12 місяців</span>
+    </div>
+    {% if heatmap.active_days %}
+    <div class="heatmap-wrap">
+      <div class="heatmap-months" style="grid-template-columns: repeat({{ heatmap.weeks|length }}, 12px);">
+        {% for month in heatmap.months %}
+        <span style="grid-column: {{ month.column + 1 }};">{{ month.label }}</span>
+        {% endfor %}
+      </div>
+      <div class="heatmap-grid">
+        {% for week in heatmap.weeks %}
+        <div class="heatmap-col">
+          {% for cell in week %}
+          {% if cell.level >= 0 %}
+          <span class="heatmap-cell l{{ cell.level }}" title="{{ cell.date }}{% if cell.count %} · {{ cell.distance_km }} км · {{ cell.count }} тренув.{% else %} · без тренувань{% endif %}"></span>
+          {% else %}
+          <span class="heatmap-cell l-empty"></span>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="heatmap-legend mt-sm">
+      <span class="muted small">менше</span>
+      <span class="heatmap-cell l0"></span>
+      <span class="heatmap-cell l1"></span>
+      <span class="heatmap-cell l2"></span>
+      <span class="heatmap-cell l3"></span>
+      <span class="heatmap-cell l4"></span>
+      <span class="muted small">більше</span>
+      <span class="muted small" style="margin-left: 8px;">пік дня: {{ heatmap.max_km }} км</span>
+    </div>
+    {% else %}
+    <div class="empty"><div class="empty-icon">🗓️</div><p class="small">Ще немає тренувань за останні 12 місяців.</p></div>
+    {% endif %}
+  </section>
+
+  <!-- ── схожі маршрути + ресурс взуття ────────────────────────────── -->
+  <div class="grid-2">
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Схожі маршрути</h2>
+        <span class="muted small">{{ routes|length }} груп · ±5 % дистанції</span>
+      </div>
+      {% if routes %}
+      <div class="stack" style="gap: 12px;">
+        {% for group in routes %}
+        <div class="route-group">
+          <div class="row-between">
+            <span class="chip">{{ group.count }}× · {{ "%g"|format(group.distance_km) }} км</span>
+            <span class="row" style="gap: 6px;">
+              {% if group.pace_delta is not none %}
+              <span class="chip {{ 'route-delta-good' if group.pace_delta < 0 else 'route-delta-bad' }}">темп {{ "%+d"|format(group.pace_delta) }} с</span>
+              {% endif %}
+              {% if group.gap_delta is not none %}
+              <span class="chip {{ 'route-delta-good' if group.gap_delta < 0 else 'route-delta-bad' }}">GAP {{ "%+d"|format(group.gap_delta) }} с</span>
+              {% endif %}
+            </span>
+          </div>
+          <div class="route-runs mt-sm">
+            {% for run in group.runs %}
+            <a class="route-run" href="/activities/{{ run.id }}">
+              <span class="route-run-date">{{ run.date }}</span>
+              <span class="route-run-pace">{{ run.pace_sec|pace_km }}</span>
+              <span class="muted small">{% if run.gap_sec %}GAP {{ run.gap_sec|pace_km }}{% else %}—{% endif %}</span>
+            </a>
+            {% endfor %}
+          </div>
+          <p class="muted small mt-sm">
+            Середній темп {{ group.avg_pace|pace_km }}{% if group.avg_gap %} · середній GAP {{ group.avg_gap|pace_km }}{% endif %}
+            · динаміка останнього проти першого
+          </p>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty"><div class="empty-icon">🔁</div><p class="small">Потрібно щонайменше два тренування зі схожим стартом, фінішем і дистанцією (±5 %).</p></div>
+      {% endif %}
+    </section>
+
+    <section class="card card-pad">
+      <div class="card-head">
+        <h2 class="card-title">Ресурс взуття</h2>
+        <span class="muted small">{{ shoe_wear|length }} активних пар · ліміт 750 км</span>
+      </div>
+      {% if shoe_wear %}
+      <div class="stack" style="gap: 14px;">
+        {% for shoe in shoe_wear %}
+        <div>
+          <div class="row-between">
+            <span class="small" style="font-weight: 700;">{{ shoe.name }}{% if shoe.brand %} · <span class="muted">{{ shoe.brand }}</span>{% endif %}</span>
+            <span class="muted small">{{ shoe.current_km }} / {{ shoe.limit_km }} км</span>
+          </div>
+          <div class="progress mt-sm">
+            <div class="progress-bar {{ 'green' if not shoe.warning else '' }}"
+                 style="width: {{ shoe.percent }}%;{% if shoe.warning %} background: linear-gradient(90deg, #f85149, #ff9b95);{% endif %}"></div>
+          </div>
+          <div class="challenge-meta">
+            <span>{{ shoe.percent }}% зносу</span>
+            {% if shoe.warning %}
+            <span class="warn-text">⚠️ ≥80 % — лишилось {{ shoe.remaining_km }} км</span>
+            {% else %}
+            <span>лишилось {{ shoe.remaining_km }} км</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty"><div class="empty-icon">👟</div><p class="small">Немає активних кросівок — додай їх на головній сторінці.</p></div>
       {% endif %}
     </section>
   </div>
@@ -286,6 +437,58 @@
         scales: {
           x: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { maxTicksLimit: 7 } },
           y: { title: { display: true, text: "EF" }, grid: { color: "rgba(255,255,255,0.05)" } }
+        }
+      }
+    });
+  }
+
+  const fmtPace = (sec) => {
+    if (sec === null || sec === undefined) return "—";
+    const minutes = Math.floor(sec / 60);
+    const seconds = Math.round(sec % 60).toString().padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  };
+
+  const gapSeries = {{ gap_series|tojson }};
+  const gapEl = document.getElementById("gapChart");
+  if (gapEl && gapSeries.length && window.Chart) {
+    Chart.defaults.color = "#8b949e";
+    Chart.defaults.borderColor = "rgba(255,255,255,0.07)";
+    new Chart(gapEl, {
+      type: "line",
+      data: {
+        labels: gapSeries.map(item => item.label),
+        datasets: [
+          {
+            label: "GAP",
+            data: gapSeries.map(item => item.gap),
+            borderColor: "#e3b341",
+            backgroundColor: "rgba(227,179,65,0.14)",
+            borderWidth: 2.2,
+            pointRadius: 3,
+            pointBackgroundColor: "#e3b341",
+            pointHoverRadius: 5,
+            tension: 0.3,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `GAP ${fmtPace(ctx.parsed.y)} /км` } }
+        },
+        scales: {
+          x: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { maxTicksLimit: 7 } },
+          y: {
+            reverse: true,
+            title: { display: true, text: "GAP, хв/км" },
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: { callback: (value) => fmtPace(value) }
+          }
         }
       }
     });

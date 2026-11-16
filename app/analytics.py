@@ -11,8 +11,13 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Activity
-from .parser import grade_adjusted_factor, samples_from_point_dicts
+from .models import Activity, Shoe
+from .parser import (
+    _haversine_m,
+    gap_pace_from_point_dicts,
+    grade_adjusted_factor,
+    samples_from_point_dicts,
+)
 
 MONTH_NAMES_UK = [
     "Січень",
@@ -853,6 +858,273 @@ def achievements(db: Session, today: date | None = None) -> list[dict]:
             "progress": f"{month_km} км",
         },
     ]
+
+
+# --------------------------------------------------------------------------- #
+#  темпові зони за VDOT та тренд GAP
+# --------------------------------------------------------------------------- #
+#: Темпові зони як частка від VDOT (VO₂max): (код, назва, нижня, верхня)
+TEMPO_ZONES = [
+    ("Z1", "Відновлення", 0.00, 0.65),
+    ("Z2", "Аеробна", 0.65, 0.79),
+    ("Z3", "Темпова", 0.79, 0.88),
+    ("Z4", "Порогова", 0.88, 0.96),
+    ("Z5", "Максимум", 0.96, 1.30),
+]
+
+
+def has_point_hr_data(db: Session) -> bool:
+    """True, якщо хоч один трек має пер-точковий пульс (а не лише середній)."""
+    return any(any(p.get("hr") for p in activity.points) for activity in _all_activities(db))
+
+
+def tempo_zone_distribution(db: Session, vdot: float | None) -> dict:
+    """Розподіл часу тренувань по темпових зонах Z1–Z5 на основі VDOT.
+
+    Інтенсивність тренування = VO₂ від середньої швидкості ÷ VDOT, тобто
+    частка від максимальної аеробної потужності.
+    """
+    if not vdot:
+        return {"zones": [], "total_seconds": 0, "has_data": False}
+
+    zone_seconds = [0.0] * len(TEMPO_ZONES)
+    for activity in _all_activities(db):
+        if not activity.duration_sec or not activity.distance_km:
+            continue
+        speed = activity.distance_km * 1000.0 / (activity.duration_sec / 60.0)
+        if speed <= 0:
+            continue
+        share = _vo2_from_velocity(speed) / vdot
+        index = len(TEMPO_ZONES) - 1
+        for position, (_, _, _, upper) in enumerate(TEMPO_ZONES):
+            if share < upper:
+                index = position
+                break
+        zone_seconds[index] += float(activity.duration_sec)
+
+    total = sum(zone_seconds)
+    zones = [
+        {
+            "code": code,
+            "name": name,
+            "percent": round(zone_seconds[position] / total * 100, 1) if total else 0.0,
+            "seconds": int(zone_seconds[position]),
+            "range": f"{int(lower * 100)}–{int(upper * 100)}% VDOT",
+        }
+        for position, (code, name, lower, upper) in enumerate(TEMPO_ZONES)
+    ]
+    return {"zones": zones, "total_seconds": int(total), "has_data": total > 0}
+
+
+def gap_trend(db: Session, days: int = 30, today: date | None = None) -> list[dict]:
+    """Тренд середнього GAP (сек/км) за останні ``days`` днів."""
+    today = today or date.today()
+    start = today - timedelta(days=days - 1)
+    series: list[dict] = []
+    for activity in _all_activities(db):
+        if _day(activity.date) < start:
+            continue
+        gap = gap_pace_from_point_dicts(activity.points)
+        if gap is None:
+            continue
+        series.append(
+            {
+                "date": activity.date.isoformat(),
+                "label": activity.date.strftime("%d.%m"),
+                "gap": gap,
+                "activity_id": activity.id,
+                "title": activity.title,
+            }
+        )
+    return series
+
+
+# --------------------------------------------------------------------------- #
+#  теплова карта тренувань (12 місяців, GitHub-стиль)
+# --------------------------------------------------------------------------- #
+def training_heatmap(db: Session, months: int = 12, today: date | None = None) -> dict:
+    """Щоденна теплова карта за ``months`` місяців зі золотим градієнтом."""
+    today = today or date.today()
+    end = today
+    start = end - timedelta(days=int(months * 30.5))
+    start -= timedelta(days=start.weekday())  # вирівнюємо по понеділку
+
+    daily: dict[date, dict[str, float]] = {}
+    for activity in _all_activities(db):
+        day = _day(activity.date)
+        if day < start or day > end:
+            continue
+        entry = daily.setdefault(day, {"distance_km": 0.0, "count": 0})
+        entry["distance_km"] += activity.distance_km
+        entry["count"] += 1
+
+    max_distance = max((value["distance_km"] for value in daily.values()), default=0.0)
+
+    def level_for(distance_km: float) -> int:
+        if max_distance <= 0:
+            return 1
+        ratio = distance_km / max_distance
+        if ratio <= 0.25:
+            return 1
+        if ratio <= 0.5:
+            return 2
+        if ratio <= 0.75:
+            return 3
+        return 4
+
+    weeks: list[list[dict]] = []
+    cursor = start
+    while cursor <= end:
+        column = []
+        for offset in range(7):
+            day = cursor + timedelta(days=offset)
+            info = daily.get(day)
+            if day > end:
+                cell_level = -1
+            elif info is None:
+                cell_level = 0
+            else:
+                cell_level = level_for(info["distance_km"])
+            column.append(
+                {
+                    "date": day.isoformat(),
+                    "level": cell_level,
+                    "distance_km": round(info["distance_km"], 2) if info else 0.0,
+                    "count": int(info["count"]) if info else 0,
+                }
+            )
+        weeks.append(column)
+        cursor += timedelta(days=7)
+
+    month_labels: list[dict] = []
+    seen: set[tuple[int, int]] = set()
+    for index, column in enumerate(weeks):
+        month_start = date.fromisoformat(column[0]["date"]).replace(day=1)
+        key = (month_start.year, month_start.month)
+        if key not in seen:
+            seen.add(key)
+            month_labels.append({"column": index, "label": MONTH_NAMES_UK[month_start.month - 1][:3]})
+
+    return {
+        "weeks": weeks,
+        "months": month_labels,
+        "total_km": round(sum(value["distance_km"] for value in daily.values()), 1),
+        "active_days": len(daily),
+        "max_km": round(max_distance, 1),
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  схожі маршрути (Matched Runs)
+# --------------------------------------------------------------------------- #
+#: Допуск схожості маршруту: старт/фініш (м) і дистанція (частка)
+MATCH_START_FINISH_M = 150.0
+MATCH_DISTANCE_TOLERANCE = 0.05
+
+
+def _route_signature(activity: Activity) -> dict | None:
+    points = [p for p in activity.points if p.get("lat") is not None and p.get("lon") is not None]
+    if len(points) < 2:
+        return None
+    return {
+        "activity": activity,
+        "start": (points[0]["lat"], points[0]["lon"]),
+        "finish": (points[-1]["lat"], points[-1]["lon"]),
+        "distance_km": activity.distance_km,
+    }
+
+
+def _same_route(left: dict, right: dict) -> bool:
+    if left["distance_km"] <= 0 or right["distance_km"] <= 0:
+        return False
+    if abs(left["distance_km"] - right["distance_km"]) / left["distance_km"] > MATCH_DISTANCE_TOLERANCE:
+        return False
+    start_gap = _haversine_m(*left["start"], *right["start"])
+    finish_gap = _haversine_m(*left["finish"], *right["finish"])
+    return start_gap <= MATCH_START_FINISH_M and finish_gap <= MATCH_START_FINISH_M
+
+
+def matched_runs(db: Session, minimum: int = 2) -> list[dict]:
+    """Групує тренування зі схожим стартом, фінішем і дистанцією (±5 %)."""
+    signatures = [signature for signature in (_route_signature(a) for a in _all_activities(db)) if signature]
+    used = [False] * len(signatures)
+    groups: list[dict] = []
+    for index, signature in enumerate(signatures):
+        if used[index]:
+            continue
+        used[index] = True
+        members = [signature]
+        for other in range(index + 1, len(signatures)):
+            if used[other]:
+                continue
+            if _same_route(signature, signatures[other]):
+                used[other] = True
+                members.append(signatures[other])
+        if len(members) < minimum:
+            continue
+        members.sort(key=lambda item: item["activity"].date)
+        runs = [
+            {
+                "id": member["activity"].id,
+                "title": member["activity"].title,
+                "date": member["activity"].date.strftime("%d.%m.%Y"),
+                "distance_km": round(member["activity"].distance_km, 2),
+                "pace_sec": round(member["activity"].avg_pace_sec, 1),
+                "gap_sec": gap_pace_from_point_dicts(member["activity"].points),
+            }
+            for member in members
+        ]
+        paces = [run["pace_sec"] for run in runs if run["pace_sec"]]
+        gaps = [run["gap_sec"] for run in runs if run["gap_sec"]]
+        pace_delta = round(runs[-1]["pace_sec"] - runs[0]["pace_sec"], 1) if len(runs) >= 2 and paces else None
+        gap_delta = (
+            round(runs[-1]["gap_sec"] - runs[0]["gap_sec"], 1)
+            if len(runs) >= 2 and runs[0]["gap_sec"] and runs[-1]["gap_sec"]
+            else None
+        )
+        groups.append(
+            {
+                "count": len(runs),
+                "distance_km": round(sum(run["distance_km"] for run in runs) / len(runs), 2),
+                "avg_pace": round(sum(paces) / len(paces), 1) if paces else None,
+                "avg_gap": round(sum(gaps) / len(gaps), 1) if gaps else None,
+                "pace_delta": pace_delta,
+                "gap_delta": gap_delta,
+                "runs": runs,
+            }
+        )
+    groups.sort(key=lambda group: group["count"], reverse=True)
+    return groups
+
+
+# --------------------------------------------------------------------------- #
+#  ресурс взуття
+# --------------------------------------------------------------------------- #
+#: Загальний ліміт кілометражу за замовчуванням, якщо в кросівок він не заданий
+SHOE_DEFAULT_LIMIT_KM = 750.0
+
+
+def shoe_resource(db: Session, limit_default: float = SHOE_DEFAULT_LIMIT_KM) -> list[dict]:
+    """Прогрес кілометражу активних кросівок (попередження при ≥80 %)."""
+    shoes = db.execute(select(Shoe).where(Shoe.is_active.is_(True)).order_by(Shoe.id)).scalars().all()
+    resource = []
+    for shoe in shoes:
+        limit = shoe.max_distance_km or limit_default
+        current = shoe.current_distance_km or 0.0
+        percent = round(min(100.0, current / limit * 100), 1) if limit > 0 else 0.0
+        resource.append(
+            {
+                "id": shoe.id,
+                "name": shoe.name,
+                "brand": shoe.brand,
+                "current_km": round(current, 1),
+                "limit_km": round(limit, 1),
+                "percent": percent,
+                "remaining_km": round(max(0.0, limit - current), 1),
+                "warning": percent >= 80.0,
+            }
+        )
+    return resource
 
 
 # --------------------------------------------------------------------------- #

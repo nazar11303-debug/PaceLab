@@ -30,13 +30,19 @@ from .analytics import (
     efficiency_metrics,
     fitness_fatigue,
     form_status,
+    gap_trend,
+    has_point_hr_data,
     heatmap_tracks,
     heatmap_years,
     hr_zone_analysis,
+    matched_runs,
     monthly_report,
     pacing_analysis,
     personal_records,
     recovery_estimate,
+    shoe_resource,
+    tempo_zone_distribution,
+    training_heatmap,
     vdot_analysis,
 )
 from .db import BASE_DIR, get_db, init_db
@@ -843,6 +849,13 @@ def analytics_page(
     ef_series = ef_trend(db, days=30)
     vdot = vdot_analysis(db)
     badges = achievements(db)
+    # коли в базі немає пер-точкового пульсу — замінюємо HR-блоки темповими зонами й GAP
+    has_point_hr = has_point_hr_data(db)
+    tempo = tempo_zone_distribution(db, vdot["vdot"])
+    gap_series = gap_trend(db, days=30)
+    heatmap = training_heatmap(db, months=12)
+    routes = matched_runs(db)
+    shoe_wear = shoe_resource(db)
     return templates.TemplateResponse(
         request=request,
         name="analytics.html",
@@ -851,14 +864,20 @@ def analytics_page(
             "error": error,
             "nav_active": "analytics",
             "zones": zones,
+            "has_point_hr": has_point_hr,
+            "tempo": tempo,
             "fitness": fitness,
             "form": form,
             "records": records,
             "recovery": recovery,
             "rest": rest,
             "ef_series": ef_series,
+            "gap_series": gap_series,
             "vdot": vdot,
             "badges": badges,
+            "heatmap": heatmap,
+            "routes": routes,
+            "shoe_wear": shoe_wear,
         },
     )
 
