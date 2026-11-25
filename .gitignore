@@ -2,21 +2,23 @@
 __pycache__/
 *.py[cod]
 .venv/
+venv/
 
-# Локальні дані застосунку (створюються при запуску)
-runtracker.db
+# Local databases and personal data
+*.db
+*.sqlite
+*.sqlite3
 PaceLab.db
-uploads/*
-!uploads/.gitkeep
-
-# Артефакти інструментів
-.trae-html-share-packages/
-
-# Робочі папки проєкту (див. AGENTS.md)
+.env
+uploads/
+data/
+sample_data/
 _backup/
 _tmp/
 
-# Тимчасові файли
+# Local tooling and temporary artifacts
+.screenshots/
+.trae-html-share-packages/
 .tmp/
 install.log
 docs/.chrome-profile/
