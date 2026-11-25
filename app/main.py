@@ -28,8 +28,10 @@ from .analytics import (
     compute_streak,
     ef_trend,
     efficiency_metrics,
+    fade_analysis,
     fitness_fatigue,
     form_status,
+    foster_load,
     gap_trend,
     has_point_hr_data,
     heatmap_tracks,
@@ -45,14 +47,16 @@ from .analytics import (
     training_heatmap,
     vdot_analysis,
 )
-from .db import BASE_DIR, get_db, init_db
+from .db import BASE_DIR, auto_backup, get_db, init_db
 from .models import Activity, AppSettings, Shoe
 from .parser import (
     PARSER_VERSION,
     SUPPORTED_EXTENSIONS,
     ParseError,
+    _parse_gpx,
     gap_pace_from_point_dicts,
     parse_activity_file,
+    plan_race,
     samples_from_point_dicts,
     splits_from_point_dicts,
 )
@@ -70,6 +74,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 async def lifespan(_: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
+    auto_backup()
     yield
 
 
@@ -252,6 +257,44 @@ def _parse_hr(value: str) -> int | None:
     return hr if 30 <= hr <= 230 else None
 
 
+def _parse_time_sec(value: str) -> int | None:
+    """Розібрати цільовий час фінішу (``H:MM:SS``, ``HH:MM`` або ``MM:SS``).
+
+    Повертає секунди або ``None``, якщо формат некоректний чи значення не додатне.
+    """
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return None
+    parts = cleaned.split(":")
+    if not 2 <= len(parts) <= 3 or not all(part.strip().isdigit() for part in parts):
+        return None
+    numbers = [int(part) for part in parts]
+    if len(numbers) == 3:
+        hours, minutes, seconds = numbers
+    else:  # «години:хвилини» — типовий запис часу на півмарафон і довші гонки
+        hours, minutes = numbers
+        seconds = 0
+    if minutes >= 60 or seconds >= 60:
+        return None
+    total = hours * 3600 + minutes * 60 + seconds
+    return total if total > 0 else None
+
+
+def _parse_pace_sec(value: str) -> int | None:
+    """Розібрати базовий темп ``MM:SS`` на кілометр; ``None`` поза межами 2:00–20:00."""
+    cleaned = (value or "").strip().split(" ")[0]
+    if not cleaned:
+        return None
+    parts = cleaned.split(":")
+    if len(parts) != 2 or not all(part.strip().isdigit() for part in parts):
+        return None
+    minutes, seconds = (int(part) for part in parts)
+    if seconds >= 60:
+        return None
+    total = minutes * 60 + seconds
+    return total if 120 <= total <= 1200 else None
+
+
 def _has_point_hr(activity: Activity) -> bool:
     """Whether the source track carries per-point pulse data."""
     try:
@@ -361,28 +404,31 @@ def home(
     )
 
 
-@app.post("/upload")
-async def upload_activity(
-    file: UploadFile = File(...),
-    shoe_id: str = Form(""),
-    avg_hr: str = Form(""),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    original_name = file.filename or ""
+def _import_activity(
+    db: Session,
+    original_name: str,
+    content: bytes,
+    shoe_id: str = "",
+    avg_hr: str = "",
+) -> tuple[Activity | None, str | None]:
+    """Зберегти один трек у БД. Повертає ``(activity, error_message)``.
+
+    ``error_message`` встановлено, коли нічого нового не створено (невірний формат,
+    порожній файл, дубль). У разі дубля повертається наявне тренування, тож виклик
+    може перенаправити користувача на нього.
+    """
     suffix = Path(original_name).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
-        return _error("Підтримуються лише файли .gpx та .fit")
-
-    content = await file.read()
+        return None, "Підтримуються лише файли .gpx та .fit"
     if not content:
-        return _error("Файл порожній — завантажте справжній .gpx або .fit")
+        return None, "Файл порожній — завантажте справжній .gpx або .fit"
 
     file_hash = hashlib.sha256(content).hexdigest()
 
     # 1) same file already imported?
     existing = db.execute(select(Activity).where(Activity.file_hash == file_hash)).scalars().first()
     if existing is not None:
-        return _error(_duplicate_message(existing))
+        return existing, _duplicate_message(existing)
 
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(original_name).name)[:80] or f"activity{suffix}"
     stored_name = f"{datetime.now():%Y%m%d-%H%M%S}_{uuid.uuid4().hex[:8]}_{safe_name}"
@@ -393,16 +439,16 @@ async def upload_activity(
         payload = parse_activity_file(destination, filename_hint=original_name)
     except ParseError as exc:
         destination.unlink(missing_ok=True)
-        return _error(str(exc))
+        return None, str(exc)
     except Exception as exc:  # noqa: BLE001 - keep the UI alive on odd files
         destination.unlink(missing_ok=True)
-        return _error(f"Не вдалося розібрати файл: {exc}")
+        return None, f"Не вдалося розібрати файл: {exc}"
 
     # 2) same start time + distance already imported (different file bytes)?
     existing = _find_duplicate(db, file_hash, payload)
     if existing is not None:
         destination.unlink(missing_ok=True)
-        return _error(_duplicate_message(existing))
+        return existing, _duplicate_message(existing)
 
     # 3) погода на годину старту (Open-Meteo, без ключа; помилки не валять імпорт)
     weather: dict | None = None
@@ -455,12 +501,45 @@ async def upload_activity(
 
     db.commit()
     db.refresh(activity)
+    return activity, None
 
+
+@app.post("/upload")
+async def upload_activity(
+    file: UploadFile = File(...),
+    shoe_id: str = Form(""),
+    avg_hr: str = Form(""),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    content = await file.read()
+    activity, error = _import_activity(db, file.filename or "", content, shoe_id, avg_hr)
+    if error or activity is None:
+        return _error(error or "Не вдалося зберегти тренування")
     summary = (
         f"Додано «{activity.title}» — {fmt_km(activity.distance_km)} км, "
         f"{fmt_duration(activity.duration_sec)}"
     )
     return _message(summary)
+
+
+@app.post("/share")
+async def share_target(
+    file: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """PWA Web Share Target: приймає .gpx/.fit із системного меню «Поділитися».
+
+    Android-застосунки надсилають файл POST-запитом ``multipart/form-data`` на
+    ``/share``; трек одразу парситься в базу, а користувач потрапляє на сторінку
+    нової активності.
+    """
+    if file is None or not file.filename:
+        return _error("Файл не отримано — поділись .gpx або .fit треком із застосунку.")
+    content = await file.read()
+    activity, error = _import_activity(db, file.filename, content)
+    if activity is not None:
+        return _redirect(f"/activities/{activity.id}")
+    return _error(error or "Не вдалося імпортувати файл")
 
 
 # --------------------------------------------------------------------------- #
@@ -492,6 +571,8 @@ def activity_detail(
     gap_sec = gap_pace_from_point_dicts(points)
     efficiency = efficiency_metrics(samples)
     pacing = pacing_analysis(samples)
+    # стійкість темпу в останній третині (Fade % за GAP) — лише для довгих треків
+    fade = fade_analysis(samples)
 
     return templates.TemplateResponse(
         request=request,
@@ -504,6 +585,7 @@ def activity_detail(
             "gap_sec": gap_sec,
             "efficiency": efficiency,
             "pacing": pacing,
+            "fade": fade,
             "message": message,
             "error": error,
             "nav_active": "",
@@ -868,6 +950,7 @@ def analytics_page(
     heatmap = training_heatmap(db, months=12)
     routes = matched_runs(db)
     shoe_wear = shoe_resource(db)
+    foster = foster_load(db)
     return templates.TemplateResponse(
         request=request,
         name="analytics.html",
@@ -890,6 +973,7 @@ def analytics_page(
             "heatmap": heatmap,
             "routes": routes,
             "shoe_wear": shoe_wear,
+            "foster": foster,
         },
     )
 
@@ -960,6 +1044,89 @@ async def api_route(request: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": f"Не вдалося побудувати маршрут: {exc}"}, status_code=500)
 
     return JSONResponse({"ok": True, **result})
+
+
+# --------------------------------------------------------------------------- #
+#  планувальник гонки (GPX-траса → розкладка по кілометрах)
+# --------------------------------------------------------------------------- #
+@app.get("/race-planner", response_class=HTMLResponse)
+def race_planner_page(
+    request: Request,
+    message: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="race_planner.html",
+        context={
+            "message": message,
+            "error": error,
+            "nav_active": "planner",
+            "plan": None,
+            "form": {"negative_split": 2},
+        },
+    )
+
+
+@app.post("/race-planner", response_class=HTMLResponse)
+async def race_planner_submit(
+    request: Request,
+    file: UploadFile = File(...),
+    target_time: str = Form(""),
+    base_pace: str = Form(""),
+    negative_split: str = Form("2"),
+) -> HTMLResponse:
+    """Побудувати розкладку гонки за GPX-трасою, цільовим часом або базовим темпом."""
+    name = file.filename or "course.gpx"
+    context: dict = {
+        "nav_active": "planner",
+        "plan": None,
+        "message": None,
+        "error": None,
+        "form": {
+            "filename": name,
+            "target_time": target_time,
+            "base_pace": base_pace,
+            "negative_split": negative_split,
+        },
+    }
+
+    def render() -> HTMLResponse:
+        return templates.TemplateResponse(request=request, name="race_planner.html", context=context)
+
+    content = await file.read()
+    if not content:
+        context["error"] = "Файл порожній — завантаж .gpx трасу майбутньої гонки."
+        return render()
+    if Path(name).suffix.lower() != ".gpx":
+        context["error"] = "Планувальник приймає лише .gpx (експорт траси з карти або годинника)."
+        return render()
+
+    target_sec = _parse_time_sec(target_time)
+    base_gap = _parse_pace_sec(base_pace)
+    if target_sec is None and base_gap is None:
+        context["error"] = "Вкажи цільовий час фінішу (напр. 3:30:00) або базовий темп (напр. 5:00)."
+        return render()
+
+    try:
+        course = _parse_gpx(io.BytesIO(content), Path(name).stem)
+        plan = plan_race(
+            course.points,
+            target_time_sec=target_sec,
+            base_gap_sec=base_gap,
+            negative_split_pct=_parse_float(negative_split, 2.0),
+        )
+    except ParseError as exc:
+        context["error"] = str(exc)
+        return render()
+    except Exception as exc:  # noqa: BLE001 - keep the page alive on odd files
+        context["error"] = f"Не вдалося побудувати розкладку: {exc}"
+        return render()
+
+    context["plan"] = plan
+    context["form"]["course_name"] = course.title
+    context["form"]["mode"] = "time" if target_sec else "pace"
+    return render()
 
 
 @app.post("/challenges/goals")

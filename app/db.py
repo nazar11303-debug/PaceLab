@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
@@ -10,8 +12,15 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "PaceLab.db"
+BACKUP_DIR = BASE_DIR / "_backup"
 
 logger = logging.getLogger("PaceLab.db")
+
+#: Свіжість автобекапу: новий не створюємо, якщо є копія молодша за стільки днів
+AUTO_BACKUP_FRESHNESS_DAYS = 7
+#: Автобекапи, старші за стільки днів, прибираються
+AUTO_BACKUP_RETENTION_DAYS = 30
+_AUTO_BACKUP_RE = re.compile(r"^auto_backup_(\d{4}-\d{2}-\d{2})\.db$")
 
 engine = create_engine(
     f"sqlite:///{DB_PATH}",
@@ -98,4 +107,54 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _apply_column_migrations()
+
+
+def auto_backup(
+    freshness_days: int = AUTO_BACKUP_FRESHNESS_DAYS,
+    retention_days: int = AUTO_BACKUP_RETENTION_DAYS,
+) -> Path | None:
+    """Тихий автобекап SQLite у ``_backup/auto_backup_YYYY-MM-DD.db``.
+
+    Копія робиться атомарно через ``VACUUM INTO`` лише коли немає свіжого бекапу
+    за останні ``freshness_days`` днів. Автобекапи, старші за ``retention_days``,
+    прибираються. Будь-які помилки ковтаються, щоб старт застосунку не залежав
+    від бекапу. Повертає шлях створеної копії або ``None``.
+    """
+    try:
+        if not DB_PATH.exists():
+            return None
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+        dated: dict[date, Path] = {}
+        for path in BACKUP_DIR.glob("auto_backup_*.db"):
+            match = _AUTO_BACKUP_RE.match(path.name)
+            if not match:
+                continue
+            try:
+                dated[date.fromisoformat(match.group(1))] = path
+            except ValueError:
+                continue
+
+        today = date.today()
+        newest = max(dated) if dated else None
+        created: Path | None = None
+        if newest is None or (today - newest).days >= freshness_days:
+            target = BACKUP_DIR / f"auto_backup_{today:%Y-%m-%d}.db"
+            if not target.exists():
+                escaped = str(target).replace("'", "''")
+                with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                    connection.exec_driver_sql(f"VACUUM INTO '{escaped}'")
+                created = target
+                dated[today] = target
+                logger.info("Auto-backup created: %s", created.name)
+
+        for day, path in dated.items():
+            if (today - day).days > retention_days:
+                path.unlink(missing_ok=True)
+                logger.info("Auto-backup pruned: %s", path.name)
+
+        return created
+    except Exception as exc:  # noqa: BLE001 - бекап не має валити старт застосунку
+        logger.warning("Auto-backup skipped: %s", exc)
+        return None
 

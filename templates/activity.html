@@ -70,11 +70,13 @@
   </section>
 
   <!-- ── ефективність бігу: GAP, EF, розкладка ──────────────────────── -->
-  {% if pacing or efficiency or gap_sec %}
+  {% if pacing or efficiency or gap_sec or fade %}
   <section class="card card-pad">
     <div class="card-head">
       <h2 class="card-title">Ефективність бігу</h2>
-      {% if pacing %}
+      {% if fade %}
+      <span class="badge {{ 'badge-green' if fade.tone == 'good' else ('badge-red' if fade.tone == 'bad' else 'badge-blue') }}">{{ fade.label }}</span>
+      {% elif pacing %}
       <span class="badge {{ 'badge-green' if pacing.type == 'negative' else ('badge-red' if pacing.type == 'positive' else 'badge-blue') }}">{{ pacing.label }}</span>
       {% endif %}
     </div>
@@ -84,6 +86,13 @@
         <span class="stat-mini-label">GAP</span>
         <span class="stat-mini-value">{{ gap_sec|pace_km }}</span>
         <span class="stat-mini-hint">еквівалентний рівнинний темп</span>
+      </div>
+      {% endif %}
+      {% if fade %}
+      <div class="stat-mini">
+        <span class="stat-mini-label">Fade % (GAP)</span>
+        <span class="stat-mini-value">{{ "%+.1f"|format(fade.fade_pct) }}%</span>
+        <span class="stat-mini-hint">стійкість темпу в останній третині</span>
       </div>
       {% endif %}
       {% if efficiency %}
@@ -105,6 +114,12 @@
     <p class="muted small mt-sm">
       {{ pacing.note }} Перша половина {{ pacing.first_pace|pace_km }}, друга — {{ pacing.second_pace|pace_km }}
       ({{ "%+.1f"|format(pacing.delta_pct) }}%).
+    </p>
+    {% endif %}
+    {% if fade %}
+    <p class="muted small mt-sm">
+      {{ fade.label }}: GAP останньої третини — {{ fade.late_gap|pace_km }} проти {{ fade.early_gap|pace_km }} на початку
+      дистанції. Fade % за GAP показує, наскільки просіло зусилля на фініші (>2 % — виражене зниження).
     </p>
     {% endif %}
     {% if not efficiency %}

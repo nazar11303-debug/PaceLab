@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Планувальник гонки — PaceLab{% endblock %}
+
+{% block content %}
+<div class="stack">
+  <div class="row-between">
+    <div>
+      <h1 style="font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">Планувальник гонки</h1>
+      <p class="muted small">Завантаж .gpx трасу майбутнього забігу, задай цільовий час фінішу або базовий темп (GAP) — і отримай розкладку по кожному кілометру з урахуванням рельєфу.</p>
+    </div>
+    <span class="badge badge-blue">Формула Мінетті · Negative Split</span>
+  </div>
+
+  <!-- ── форма ──────────────────────────────────────────────────────── -->
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Траса та ціль</h2>
+      <span class="muted small">.gpx · один із двох параметрів</span>
+    </div>
+    <form action="/race-planner" method="post" enctype="multipart/form-data" class="form-grid mt-md">
+      <label id="planner-dropzone" for="planner-file" class="dropzone">
+        <span class="drop-icon">🏁</span>
+        <span class="drop-title">Перетягни .gpx трасу сюди або клікни, щоб обрати</span>
+        <span class="drop-hint">експорт маршруту з карти, годинника або сервісу прокладання</span>
+        <span id="planner-file-name" class="badge badge-accent" hidden>
+          {% if form.filename %}{{ form.filename }}{% endif %}
+        </span>
+        <input id="planner-file" name="file" type="file" accept=".gpx" class="sr-only" required>
+      </label>
+
+      <div class="form-row">
+        <div>
+          <label class="label" for="target-time">Цільовий час фінішу</label>
+          <input class="input" id="target-time" name="target_time" type="text"
+                 inputmode="numeric" placeholder="3:30:00"
+                 value="{{ form.target_time or '' }}">
+        </div>
+        <div>
+          <label class="label" for="base-pace">…або базовий темп (GAP), хв:сс /км</label>
+          <input class="input" id="base-pace" name="base_pace" type="text"
+                 inputmode="numeric" placeholder="5:00"
+                 value="{{ form.base_pace or '' }}">
+        </div>
+        <div>
+          <label class="label" for="negative-split">Negative Split, %</label>
+          <input class="input" id="negative-split" name="negative_split" type="number"
+                 min="0" max="10" step="0.5" value="{{ form.negative_split if form.negative_split is not none else 2 }}">
+        </div>
+      </div>
+
+      <div class="row" style="align-items: center; gap: 12px; flex-wrap: wrap;">
+        <button class="btn btn-primary" type="submit">Побудувати розкладку</button>
+        <span class="muted small">Заповни <b>або</b> цільовий час, <b>або</b> базовий темп. Negative Split: перша половина на вказаний % спокійніша за другу (0 — рівний темп).</span>
+      </div>
+    </form>
+  </section>
+
+  <!-- ── результат ──────────────────────────────────────────────────── -->
+  {% if plan %}
+  <section class="metrics-grid">
+    {% set metrics = [
+      ("Дистанція", plan.distance_km ~ " км"),
+      ("Набір висоти", plan.elevation_gain|round(0)|int ~ " м"),
+      ("Цільовий час", plan.target_time_sec|duration),
+      ("Базовий GAP", plan.base_gap_sec|pace_km),
+    ] %}
+    {% if plan.effective_gap_sec %}{% set metrics = metrics + [("Ефективний GAP", plan.effective_gap_sec|pace_km)] %}{% endif %}
+    {% if plan.has_elevation %}{% set metrics = metrics + [("Еквівалент рівнини", plan.flat_km ~ " км")] %}{% endif %}
+    {% for label, value in metrics %}
+    <div class="card metric">
+      <p class="metric-label">{{ label }}</p>
+      <p class="metric-value">{{ value }}</p>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Стратегія за половинами</h2>
+      <span class="badge badge-accent">Negative Split {{ "%g"|format(plan.negative_split_pct) }}%</span>
+    </div>
+    <div class="stat-mini-grid">
+      <div class="stat-mini">
+        <span class="stat-mini-label">Перша половина</span>
+        <span class="stat-mini-value">{{ plan.first_half_pace_sec|pace_km }}</span>
+        <span class="stat-mini-hint">спокійніше — економія глікогену</span>
+      </div>
+      <div class="stat-mini">
+        <span class="stat-mini-label">Друга половина</span>
+        <span class="stat-mini-value">{{ plan.second_half_pace_sec|pace_km }}</span>
+        <span class="stat-mini-hint">швидше — фініш на негативі</span>
+      </div>
+      <div class="stat-mini">
+        <span class="stat-mini-label">Скид висоти</span>
+        <span class="stat-mini-value">{{ plan.elevation_loss|round(0)|int }} м</span>
+        <span class="stat-mini-hint">сумарний спуск траси</span>
+      </div>
+    </div>
+    <p class="muted small mt-sm">
+      {% if plan.has_elevation %}
+      Темп на кожному кілометрі скориговано на ухил за формулою Мінетті: підйоми повільніші, спуски швидші за того самого зусилля (GAP).
+      {% else %}
+      У треку немає даних висоти — розкладка побудована як рівнинна.
+      {% endif %}
+    </p>
+  </section>
+
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Темп і рельєф по дистанції</h2>
+      <span class="muted small">висота — м · темп — хв/км</span>
+    </div>
+    <div class="chart-box"><canvas id="planChart"></canvas></div>
+  </section>
+
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Розкладка по кілометрах</h2>
+      <span class="muted small">{{ plan.splits|length }} відрізків</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>Км</th>
+            <th class="num">Темп</th>
+            <th class="num">GAP</th>
+            <th class="num">Час кола</th>
+            <th class="num">Накопичено</th>
+            <th class="num">Нахил</th>
+            <th class="num">Висота</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for split in plan.splits %}
+          {% set gain = split.ascent_m|round(0)|int %}
+          {% set loss = split.descent_m|round(0)|int %}
+          <tr>
+            <td>
+              {{ split.km }}{% if split.partial %}<span class="muted small"> · {{ "%.2f"|format(split.distance_km) }} км</span>{% endif %}
+            </td>
+            <td class="num">{{ split.pace_sec|pace_km }}</td>
+            <td class="num">{{ split.gap_sec|pace_km if split.gap_sec else "—" }}</td>
+            <td class="num">{{ split.time_sec|duration }}</td>
+            <td class="num">{{ split.cumulative_sec|duration }}</td>
+            <td class="num">
+              {% if split.grade_pct is not none %}{{ "%+.1f"|format(split.grade_pct) }}%{% else %}—{% endif %}
+            </td>
+            <td class="num">+{{ gain }} / −{{ loss }} м</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if plan %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+  const splits = {{ plan.splits|tojson }};
+
+  function fmtPace(sec) {
+    if (!sec && sec !== 0) return "—";
+    const total = Math.round(sec);
+    return String(Math.floor(total / 60)).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
+  }
+
+  const chartEl = document.getElementById("planChart");
+  if (chartEl && window.Chart && splits.length) {
+    Chart.defaults.color = "#8b949e";
+    Chart.defaults.borderColor = "rgba(255,255,255,0.07)";
+
+    const labels = splits.map(s => s.km + (s.partial ? " ·" : ""));
+    // профіль висоти: початок кожного кілометра + фініш останнього
+    const elevation = splits.map(s => (s.grade_pct === null ? null : s.elevation_start));
+    const paceData = splits.map(s => s.pace_sec);
+    const gapData = splits.map(s => s.gap_sec);
+
+    new Chart(chartEl, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "Висота, м",
+            data: elevation,
+            borderColor: "#d29922",
+            backgroundColor: "rgba(210,153,34,0.18)",
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.25,
+            fill: true,
+            yAxisID: "yEle",
+            order: 2,
+            spanGaps: true
+          },
+          {
+            label: "Темп, хв/км",
+            data: paceData,
+            borderColor: "#fc4c02",
+            backgroundColor: "rgba(252,76,2,0.12)",
+            borderWidth: 2.5,
+            pointRadius: 2.5,
+            pointBackgroundColor: "#fc4c02",
+            tension: 0.3,
+            yAxisID: "yPace",
+            order: 1
+          },
+          {
+            label: "GAP, хв/км",
+            data: gapData,
+            borderColor: "#bc8cff",
+            borderWidth: 2,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            tension: 0.3,
+            yAxisID: "yPace",
+            order: 0
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { labels: { boxWidth: 12, boxHeight: 12 } },
+          tooltip: {
+            callbacks: {
+              title: (items) => (items.length ? items[0].label.replace(" ·", "") + " км" : ""),
+              label: (ctx) => ctx.dataset.yAxisID === "yPace"
+                ? ctx.dataset.label + ": " + fmtPace(ctx.parsed.y)
+                : "Висота: " + Math.round(ctx.parsed.y) + " м"
+            }
+          }
+        },
+        scales: {
+          x: { title: { display: true, text: "Кілометр" }, grid: { color: "rgba(255,255,255,0.05)" } },
+          yEle: {
+            position: "left",
+            title: { display: true, text: "Висота, м" },
+            grid: { color: "rgba(255,255,255,0.05)" },
+            ticks: { maxTicksLimit: 6 }
+          },
+          yPace: {
+            position: "right",
+            reverse: true,
+            title: { display: true, text: "Темп, хв/км" },
+            grid: { drawOnChartArea: false },
+            ticks: { callback: (value) => fmtPace(value) }
+          }
+        }
+      }
+    });
+  }
+</script>
+{% endif %}
+{% endblock %}

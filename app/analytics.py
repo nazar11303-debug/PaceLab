@@ -482,6 +482,127 @@ def acwr(db: Session, today: date | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+#  контроль навантаження за Фостером (Monotony / Strain / прогресія обсягу)
+# --------------------------------------------------------------------------- #
+#: Поріг монотонності за Фостером: ≥2.0 — тренування занадто однорідні
+FOSTER_MONOTONY_HIGH = 2.0
+#: Поріг тижневого Strain, за яким радимо розвантаження (евристика під цю модель)
+FOSTER_STRAIN_HIGH = 1500.0
+#: Допустимий тижневий приріст навантаження (правило +10 %)
+FOSTER_PROGRESSION_LIMIT = 10.0
+
+
+def foster_load(db: Session, today: date | None = None) -> dict:
+    """Контроль навантаження за Фостером за останні 7 днів.
+
+    * ``monotony`` — середнє добове навантаження ÷ стандартне відхилення;
+    * ``strain`` — тижневе навантаження × monotony;
+    * ``progression_pct`` — приріст тижневого навантаження проти попереднього тижня
+      (правило +10 %);
+    * ``deload`` — чи варто запланувати розвантажувальний тиждень (триґери:
+      монотонність, Strain, надто різке зростання обсягу).
+    """
+    today = today or date.today()
+    loads = _daily_loads(db)
+
+    def window(offsets: range) -> list[float]:
+        return [loads.get(today - timedelta(days=offset), 0.0) for offset in offsets]
+
+    this_week = window(range(6, -1, -1))
+    previous_week = window(range(13, 6, -1))
+    total = sum(this_week)
+    previous_total = sum(previous_week)
+    daily_mean = total / 7.0
+
+    daily = [
+        {
+            "date": (today - timedelta(days=offset)).isoformat(),
+            "label": WEEKDAY_NAMES_UK[(today - timedelta(days=offset)).weekday()],
+            "load": round(value, 1),
+        }
+        for offset, value in zip(range(6, -1, -1), this_week)
+    ]
+
+    if daily_mean <= 0:
+        return {
+            "has_data": False,
+            "monotony": None,
+            "strain": None,
+            "weekly_load": 0.0,
+            "prev_weekly_load": round(previous_total, 1),
+            "progression_pct": None,
+            "progression_ok": None,
+            "deload": False,
+            "deload_reason": None,
+            "status": "Немає даних",
+            "tone": "muted",
+            "advice": "За останні 7 днів немає навантаження — додай тренування, щоб побачити контроль обсягу.",
+            "daily": daily,
+        }
+
+    variance = sum((value - daily_mean) ** 2 for value in this_week) / 7.0
+    deviation = math.sqrt(variance)
+    if deviation > 1e-6:
+        monotony = round(daily_mean / deviation, 2)
+        strain = round(total * monotony, 1)
+    else:
+        # усі дні однакові: варіації немає — це максимальна монотонність
+        monotony = None
+        strain = None
+
+    progression_pct = (
+        round((total - previous_total) / previous_total * 100.0, 1) if previous_total > 0.5 else None
+    )
+    progression_ok = progression_pct is None or progression_pct <= FOSTER_PROGRESSION_LIMIT
+
+    reasons: list[str] = []
+    if monotony is None:
+        reasons.append("навантаження розподілене рівномірно, без варіації днів")
+    elif monotony >= FOSTER_MONOTONY_HIGH:
+        reasons.append(f"висока монотонність ({monotony})")
+    if strain is not None and strain >= FOSTER_STRAIN_HIGH:
+        reasons.append(f"високий Strain ({strain})")
+    if progression_pct is not None and progression_pct > FOSTER_PROGRESSION_LIMIT:
+        reasons.append(f"обсяг зріс на {progression_pct} % (понад +10 %)")
+
+    deload = bool(reasons)
+    if deload:
+        status, tone = "Потрібне розвантаження", "high"
+        advice = (
+            "Заплануй розвантажувальний тиждень: знизь обсяг на 20–30 % і додай варіацію "
+            "(легкі, середні та важкі дні замість однакових). Ознаки: " + "; ".join(reasons) + "."
+        )
+    else:
+        status, tone = "Добре", "optimal"
+        if progression_pct is None:
+            advice = (
+                "Навантаження розподілене з варіацією. Попереднього тижня для порівняння обсягу "
+                "ще немає — продовжуй у тому ж темпі."
+            )
+        else:
+            advice = (
+                f"Приріст обсягу {progression_pct:+.1f} % — у межах правила +10 %. "
+                "Навантаження розподілене з достатньою варіацією."
+            )
+
+    return {
+        "has_data": True,
+        "monotony": monotony,
+        "strain": strain,
+        "weekly_load": round(total, 1),
+        "prev_weekly_load": round(previous_total, 1),
+        "progression_pct": progression_pct,
+        "progression_ok": progression_ok,
+        "deload": deload,
+        "deload_reason": "; ".join(reasons) if reasons else None,
+        "status": status,
+        "tone": tone,
+        "advice": advice,
+        "daily": daily,
+    }
+
+
+# --------------------------------------------------------------------------- #
 #  personal records
 # --------------------------------------------------------------------------- #
 PR_DISTANCES_KM = [1.0, 3.0, 5.0, 10.0, 21.1]
@@ -732,6 +853,76 @@ def pacing_analysis(
         "delta_pct": round(delta, 1),
         "first_pace": round(first_pace, 1),
         "second_pace": round(second_pace, 1),
+    }
+
+
+#: Мінімальна дистанція, з якої рахуємо фейд темпу в останній третині (км)
+FADE_MIN_DISTANCE_KM = 12.0
+
+
+def _gap_for_window(
+    samples: list[tuple[float, float, int | None, float | None]],
+    lo_m: float,
+    hi_m: float,
+) -> float | None:
+    """GAP (сек/км) для ділянки дистанції ``[lo_m, hi_m]`` або ``None`` без висот."""
+    flat_m = 0.0
+    seconds = 0.0
+    has_elevation = False
+    for (d1, t1, _, e1), (d2, t2, _, e2) in zip(samples, samples[1:]):
+        if not lo_m <= (d1 + d2) / 2 <= hi_m:
+            continue
+        delta_d, delta_t = d2 - d1, t2 - t1
+        if delta_d <= 0 or delta_t <= 0:
+            continue
+        seconds += delta_t
+        if e1 is not None and e2 is not None:
+            has_elevation = True
+            flat_m += delta_d * grade_adjusted_factor((e2 - e1) / delta_d)
+        else:
+            flat_m += delta_d
+    if not has_elevation or flat_m <= 0 or seconds <= 0:
+        return None
+    return seconds / (flat_m / 1000.0)
+
+
+def fade_analysis(
+    samples: list[tuple[float, float, int | None, float | None]],
+    min_distance_km: float = FADE_MIN_DISTANCE_KM,
+) -> dict | None:
+    """Стійкість темпу в останній третині дистанції (Fade % за GAP).
+
+    ``Fade %`` = (GAP останньої третини − GAP перших двох третин) / GAP перших двох
+    третин × 100. Позитивне значення — у фіналі бігун втратив темп (фейд), близьке
+    до нуля чи від'ємне — тримав рівне зусилля або прискорився.
+
+    Рахується за GAP, тож рельєф не спотворює оцінку витривалості. Повертає
+    ``None`` для треків, коротших за ``min_distance_km``, або без даних висот.
+    """
+    if len(samples) < 4:
+        return None
+    total_distance = samples[-1][0]
+    if total_distance < min_distance_km * 1000.0:
+        return None
+    boundary = total_distance * 2.0 / 3.0
+    early_gap = _gap_for_window(samples, 0.0, boundary)
+    late_gap = _gap_for_window(samples, boundary, total_distance + 1.0)
+    if not early_gap or not late_gap or early_gap <= 0:
+        return None
+    fade_pct = (late_gap - early_gap) / early_gap * 100.0
+    if fade_pct <= 2.0:
+        tone, label = "good", "Стабільний фініш"
+    elif fade_pct <= 6.0:
+        tone, label = "ok", "Помірний фейд"
+    else:
+        tone, label = "bad", "Виражений фейд"
+    return {
+        "fade_pct": round(fade_pct, 1),
+        "early_gap": round(early_gap, 1),
+        "late_gap": round(late_gap, 1),
+        "label": label,
+        "tone": tone,
+        "distance_km": round(total_distance / 1000.0, 2),
     }
 
 

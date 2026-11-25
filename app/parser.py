@@ -273,12 +273,20 @@ def _duration_sec(points: list[TrackPoint]) -> int | None:
 # --------------------------------------------------------------------------- #
 #  GPX
 # --------------------------------------------------------------------------- #
-def _parse_gpx(path: Path, fallback_title: str | None = None) -> RawTrack:
+def _parse_gpx(source: Any, fallback_title: str | None = None) -> RawTrack:
+    """Розібрати GPX із файлу на диску (``Path``/``str``) або з потоку в пам'яті.
+
+    Потоковий варіант (``BytesIO``) використовує планувальник гонки: траса майбутнього
+    забігу розбирається без збереження на диск.
+    """
     import gpxpy
 
     try:
-        with path.open("rb") as handle:
-            gpx = gpxpy.parse(handle)
+        if isinstance(source, (str, Path)):
+            with Path(source).open("rb") as handle:
+                gpx = gpxpy.parse(handle)
+        else:
+            gpx = gpxpy.parse(source)
     except Exception as exc:  # noqa: BLE001 - surfaced as ParseError
         raise ParseError(f"Не вдалося прочитати GPX-файл: {exc}") from exc
 
@@ -318,7 +326,8 @@ def _parse_gpx(path: Path, fallback_title: str | None = None) -> RawTrack:
 
     _assign_distances(points)
     if not title:
-        title = (fallback_title or path.stem).replace("_", " ").strip() or "Тренування"
+        stem = Path(source).stem if isinstance(source, (str, Path)) else ""
+        title = (fallback_title or stem).replace("_", " ").strip() or "Тренування"
     return RawTrack(points=points, title=title)
 
 
@@ -794,4 +803,203 @@ def parse_activity_file(path: str | Path, filename_hint: str | None = None) -> d
     if payload["distance_km"] <= 0 and payload["duration_sec"] <= 0:
         raise ParseError("Не вдалося визначити дистанцію чи тривалість тренування")
     return payload
+
+
+# --------------------------------------------------------------------------- #
+#  планувальник гонки: розкладка за рельєфом (Мінетті) + negative split
+# --------------------------------------------------------------------------- #
+#: Легкий negative split за замовчуванням: перша половина на 2 % повільніша за другу.
+DEFAULT_NEGATIVE_SPLIT_PCT = 2.0
+#: Максимальна сила negative split, яку приймає планувальник (%).
+MAX_NEGATIVE_SPLIT_PCT = 10.0
+
+
+def _course_profile(
+    points: list[TrackPoint],
+) -> list[tuple[float, float, float | None, float, float]]:
+    """Профіль траси: ``(distance_m, flat_m, elevation, ascent_m, descent_m)``.
+
+    ``flat_m`` — накопичена «еквівалентна рівнинна» дистанція за Мінетті (рельєф
+    враховано), ``ascent_m``/``descent_m`` — накопичені набір і скид висоти.
+    """
+    elevations = smooth_elevations([point.elevation for point in points])
+    rows: list[tuple[float, float, float | None, float, float]] = []
+    total_d = 0.0
+    total_flat = 0.0
+    ascent = 0.0
+    descent = 0.0
+    previous: tuple[float, float, float | None] | None = None
+    for index, point in enumerate(points):
+        if point.lat is None or point.lon is None:
+            continue
+        elevation = elevations[index]
+        if previous is not None:
+            segment = _haversine_m(previous[0], previous[1], point.lat, point.lon)
+            total_d += segment
+            if segment > 0 and elevation is not None and previous[2] is not None:
+                delta = elevation - previous[2]
+                total_flat += segment * grade_adjusted_factor(delta / segment)
+                if delta > 0:
+                    ascent += delta
+                else:
+                    descent -= delta
+            else:
+                total_flat += segment
+        rows.append((total_d, total_flat, elevation, ascent, descent))
+        previous = (point.lat, point.lon, elevation)
+    return rows
+
+
+def _profile_at(
+    rows: list[tuple[float, float, float | None, float, float]],
+    index: int,
+    target: float,
+) -> float | None:
+    """Лінійна інтерполяція ``rows[index]`` у точці реальної дистанції ``target``."""
+    previous = rows[0]
+    for current in rows:
+        if current[0] >= target:
+            if current[0] == previous[0]:
+                return current[index]
+            ratio = (target - previous[0]) / (current[0] - previous[0])
+            start, end = previous[index], current[index]
+            if start is None or end is None:
+                return start if start is not None else end
+            return start + ratio * (end - start)
+        previous = current
+    return rows[-1][index]
+
+
+def plan_race(
+    points: list[TrackPoint],
+    *,
+    target_time_sec: float | None = None,
+    base_gap_sec: float | None = None,
+    negative_split_pct: float = DEFAULT_NEGATIVE_SPLIT_PCT,
+) -> dict[str, Any]:
+    """Розкладка гонки по кілометрах для GPX-траси.
+
+    За цільовим часом фінішу **або** базовим темпом (GAP) розподіляє час по
+    кілометрах із урахуванням рельєфу (формула Мінетті) та застосовує легкий
+    negative split: перша половина біжиться на ``negative_split_pct`` % спокійніше
+    за другу. Повертає підсумок і список кілометрових відрізків.
+    """
+    profile = _course_profile(points)
+    if len(profile) < 2:
+        raise ParseError("У трасі замало точок GPS для побудови розкладки")
+    total_distance = profile[-1][0]
+    total_flat = profile[-1][1]
+    if total_distance < 100:
+        raise ParseError("Траса закоротка — потрібно щонайменше 100 м")
+    if not target_time_sec and not base_gap_sec:
+        raise ParseError("Вкажи цільовий час фінішу або базовий темп (GAP)")
+
+    has_elevation = any(row[2] is not None for row in profile)
+    strength = max(0.0, min(MAX_NEGATIVE_SPLIT_PCT, float(negative_split_pct))) / 100.0
+    total_flat_km = total_flat / 1000.0
+
+    # 1) 1-кілометрові вікна з «еквівалентною рівнинною» довжиною та набором/скидом
+    windows: list[dict[str, Any]] = []
+    boundary = 0.0
+    km = 1
+    while boundary < total_distance - 0.5:
+        upper = min(boundary + 1000.0, total_distance)
+        flat_start = _profile_at(profile, 1, boundary) or 0.0
+        flat_end = _profile_at(profile, 1, upper) or 0.0
+        elevation_start = _profile_at(profile, 2, boundary)
+        elevation_end = _profile_at(profile, 2, upper)
+        windows.append(
+            {
+                "km": km,
+                "distance_m": upper - boundary,
+                "flat_m": max(0.0, flat_end - flat_start),
+                "flat_start": flat_start,
+                "elevation_start": elevation_start,
+                "grade_pct": (
+                    round((elevation_end - elevation_start) / (upper - boundary) * 100.0, 1)
+                    if elevation_start is not None and elevation_end is not None
+                    else None
+                ),
+                "ascent_m": (_profile_at(profile, 3, upper) or 0.0) - (_profile_at(profile, 3, boundary) or 0.0),
+                "descent_m": (_profile_at(profile, 4, upper) or 0.0) - (_profile_at(profile, 4, boundary) or 0.0),
+                "partial": (upper - boundary) < 999.0,
+            }
+        )
+        boundary = upper
+        km += 1
+
+    # 2) ваговий коефіцієнт negative split за часткою пройденої рівнинної дистанції
+    raw_cost = 0.0
+    for window in windows:
+        fraction = (
+            (window["flat_start"] + window["flat_m"] / 2.0) / total_flat if total_flat > 0 else 0.0
+        )
+        window["factor"] = 1.0 + 2.0 * strength * (0.5 - fraction)
+        raw_cost += window["flat_m"] / 1000.0 * window["factor"]
+
+    # 3) базовий GAP: з цільового часу (з нормалізацією) або заданий напряму
+    if target_time_sec:
+        gap = float(target_time_sec) / raw_cost if raw_cost > 0 else 0.0
+    else:
+        gap = float(base_gap_sec)  # type: ignore[arg-type]
+
+    # 4) час, темп і GAP по кожному кілометру
+    splits: list[dict[str, Any]] = []
+    cumulative_time = 0.0
+    for window in windows:
+        flat_km = window["flat_m"] / 1000.0
+        seconds = gap * flat_km * window["factor"]
+        distance_km = window["distance_m"] / 1000.0
+        cumulative_time += seconds
+        splits.append(
+            {
+                "km": window["km"],
+                "distance_km": round(distance_km, 2),
+                "partial": window["partial"],
+                "time_sec": round(seconds),
+                "cumulative_sec": round(cumulative_time),
+                "pace_sec": round(seconds / distance_km, 1) if distance_km > 0 else 0.0,
+                "gap_sec": round(seconds / flat_km, 1) if flat_km > 0 else None,
+                "grade_pct": window["grade_pct"],
+                "ascent_m": round(window["ascent_m"], 1),
+                "descent_m": round(window["descent_m"], 1),
+            }
+        )
+
+    # 5) середній темп половин — щоб показати ефект negative split
+    half = total_distance / 2.0
+    first_time = 0.0
+    second_time = 0.0
+    traversed = 0.0
+    for split in splits:
+        distance = split["distance_km"] * 1000.0
+        seconds = split["time_sec"]
+        if traversed + distance <= half:
+            first_time += seconds
+        elif traversed >= half:
+            second_time += seconds
+        else:
+            ratio = (half - traversed) / distance if distance > 0 else 0.0
+            first_time += seconds * ratio
+            second_time += seconds * (1.0 - ratio)
+        traversed += distance
+
+    return {
+        "distance_km": round(total_distance / 1000.0, 2),
+        "flat_km": round(total_flat_km, 2),
+        "elevation_gain": round(profile[-1][3], 1),
+        "elevation_loss": round(profile[-1][4], 1),
+        "has_elevation": has_elevation,
+        "target_time_sec": int(round(cumulative_time)),
+        "base_gap_sec": round(gap, 1),
+        "effective_gap_sec": round(cumulative_time / total_flat_km, 1) if total_flat_km > 0 else None,
+        "negative_split_pct": round(strength * 100.0, 1),
+        "first_half_pace_sec": round(first_time / (half / 1000.0), 1) if half > 0 else None,
+        "second_half_pace_sec": (
+            round(second_time / ((total_distance - half) / 1000.0), 1)
+            if total_distance > half
+            else None
+        ),
+        "splits": splits,
+    }
 

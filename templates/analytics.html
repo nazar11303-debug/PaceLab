@@ -121,6 +121,46 @@
     {% endif %}
   </section>
 
+  <!-- ── контроль навантаження за Фостером ─────────────────────────── -->
+  <section class="card card-pad">
+    <div class="card-head">
+      <h2 class="card-title">Контроль обсягу за Фостером</h2>
+      <span class="badge {{ 'badge-red' if foster.tone == 'high' else ('badge-green' if foster.tone == 'optimal' else '') }}">{{ foster.status }}</span>
+    </div>
+    {% if foster.has_data %}
+    <div class="stat-mini-grid">
+      <div class="stat-mini">
+        <span class="stat-mini-label">Monotony</span>
+        <span class="stat-mini-value">{{ foster.monotony if foster.monotony is not none else "—" }}</span>
+        <span class="stat-mini-hint">середнє добове ÷ розкид; ≥2.0 — замало варіації</span>
+      </div>
+      <div class="stat-mini">
+        <span class="stat-mini-label">Strain</span>
+        <span class="stat-mini-value">{{ foster.strain if foster.strain is not none else "—" }}</span>
+        <span class="stat-mini-hint">тижневе навантаження × Monotony</span>
+      </div>
+      <div class="stat-mini">
+        <span class="stat-mini-label">Тижневе навантаження</span>
+        <span class="stat-mini-value">{{ foster.weekly_load|round(0)|int }}</span>
+        <span class="stat-mini-hint">попередній тиждень: {{ foster.prev_weekly_load|round(0)|int }}</span>
+      </div>
+      <div class="stat-mini">
+        <span class="stat-mini-label">Прогресія обсягу</span>
+        <span class="stat-mini-value">{% if foster.progression_pct is not none %}{{ "%+.1f"|format(foster.progression_pct) }}%{% else %}—{% endif %}</span>
+        <span class="stat-mini-hint">правило +10 % до попереднього тижня</span>
+      </div>
+    </div>
+    <div class="chart-box-sm mt-md"><canvas id="fosterChart"></canvas></div>
+    <p class="mt-sm" style="font-size: 14px;">{{ foster.advice }}</p>
+    {% if foster.deload %}
+    <span class="badge badge-red mt-sm">🗓️ Розвантажувальний тиждень</span>
+    {% endif %}
+    <p class="muted small mt-sm">Monotony = середнє добове навантаження за 7 днів ÷ стандартне відхилення; Strain = тижневе навантаження × Monotony. Рівні дні без варіації дають високу монотонність навіть за помірного обсягу.</p>
+    {% else %}
+    <div class="empty"><div class="empty-icon">🧭</div><p class="small">{{ foster.advice }}</p></div>
+    {% endif %}
+  </section>
+
   <!-- ── ефективність (EF) + оцінка VDOT ──────────────────────────── -->
   <div class="grid-2">
     <section class="card card-pad">
@@ -520,6 +560,41 @@
             grid: { color: "rgba(255,255,255,0.05)" },
             ticks: { callback: (value) => fmtPace(value) }
           }
+        }
+      }
+    });
+  }
+
+  const fosterDaily = {{ foster.daily|tojson }};
+  const fosterEl = document.getElementById("fosterChart");
+  if (fosterEl && fosterDaily.length && window.Chart) {
+    Chart.defaults.color = "#8b949e";
+    Chart.defaults.borderColor = "rgba(255,255,255,0.07)";
+    new Chart(fosterEl, {
+      type: "bar",
+      data: {
+        labels: fosterDaily.map(item => item.label),
+        datasets: [
+          {
+            label: "Навантаження за день",
+            data: fosterDaily.map(item => item.load),
+            backgroundColor: "rgba(252,76,2,0.55)",
+            borderColor: "#fc4c02",
+            borderWidth: 1,
+            borderRadius: 4
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `Навантаження: ${Math.round(ctx.parsed.y)}` } }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero: true, title: { display: true, text: "Навантаження" }, grid: { color: "rgba(255,255,255,0.05)" } }
         }
       }
     });
